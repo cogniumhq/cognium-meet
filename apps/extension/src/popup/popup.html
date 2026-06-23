@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cognium Meet</title>
+    <link rel="stylesheet" href="./popup.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header>
+        <h1>Cognium Meet</h1>
+        <p class="subtitle">Record &amp; transcribe Google Meet</p>
+      </header>
+
+      <section id="status-section">
+        <div id="recording-indicator" class="hidden">
+          <span class="dot"></span>
+          <span id="timer">00:00</span>
+        </div>
+        <p id="status-text">Ready</p>
+      </section>
+
+      <div class="actions">
+        <button id="start-btn" type="button">Start recording</button>
+        <button id="stop-btn" type="button" class="hidden danger">Stop &amp; transcribe</button>
+      </div>
+
+      <section id="history-section">
+        <div class="history-header">
+          <h2>Recent transcripts</h2>
+          <a id="options-link" href="#">Settings</a>
+        </div>
+        <ul id="history-list"></ul>
+      </section>
+    </main>
+    <script type="module" src="./popup.ts"></script>
+  </body>
+</html>

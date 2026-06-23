@@ -1,0 +1,208 @@
+import {
+  addToHistory,
+  getHistory,
+  updateHistoryEntry,
+  type StoredRecording,
+} from "../lib/storage.js";
+import { downloadTranscript, pollRecording, uploadRecording } from "../lib/upload.js";
+
+const startBtn = document.getElementById("start-btn") as HTMLButtonElement;
+const stopBtn = document.getElementById("stop-btn") as HTMLButtonElement;
+const statusText = document.getElementById("status-text") as HTMLParagraphElement;
+const recordingIndicator = document.getElementById("recording-indicator") as HTMLDivElement;
+const timerEl = document.getElementById("timer") as HTMLSpanElement;
+const historyList = document.getElementById("history-list") as HTMLUListElement;
+const optionsLink = document.getElementById("options-link") as HTMLAnchorElement;
+
+let timerInterval: number | undefined;
+let recordingStartedAt: number | undefined;
+
+void init();
+
+async function init(): Promise<void> {
+  optionsLink.addEventListener("click", (e) => {
+    e.preventDefault();
+    void chrome.runtime.openOptionsPage();
+  });
+
+  startBtn.addEventListener("click", () => void startRecording());
+  stopBtn.addEventListener("click", () => void stopRecording());
+
+  const status = await chrome.runtime.sendMessage({ type: "GET_STATUS" });
+  if (status?.isRecording && status.startedAt) {
+    enterRecordingUi(status.startedAt);
+    setStatus("Recording in progress…");
+  }
+
+  await renderHistory();
+}
+
+async function startRecording(): Promise<void> {
+  startBtn.disabled = true;
+  setStatus("Starting…");
+
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) {
+      throw new Error("No active tab found");
+    }
+
+    const response = await chrome.runtime.sendMessage({
+      type: "START_RECORDING",
+      tabId: tab.id,
+      meetingTitle: tab.title,
+    });
+
+    if (response?.type === "RECORDING_ERROR") {
+      throw new Error(response.error);
+    }
+
+    recordingStartedAt = response.startedAt as number;
+    enterRecordingUi(recordingStartedAt);
+    setStatus(`Recording: ${response.meetingTitle ?? "Google Meet"}`);
+  } catch (err) {
+    setStatus(err instanceof Error ? err.message : String(err), true);
+    startBtn.disabled = false;
+  }
+}
+
+async function stopRecording(): Promise<void> {
+  stopBtn.disabled = true;
+  setStatus("Stopping and uploading…");
+
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "STOP_RECORDING" });
+    if (response?.type === "RECORDING_ERROR") {
+      throw new Error(response.error);
+    }
+
+    exitRecordingUi();
+    setStatus("Uploading audio…");
+
+    const upload = await uploadRecording({
+      blob: response.blob,
+      meetingTitle: response.meetingTitle,
+      startedAt: response.startedAt,
+      durationMs: response.durationMs,
+    });
+
+    const entry: StoredRecording = {
+      id: upload.id,
+      meetingTitle: response.meetingTitle,
+      startedAt: new Date(response.startedAt).toISOString(),
+      durationMs: response.durationMs,
+      status: upload.status,
+      createdAt: new Date().toISOString(),
+    };
+    await addToHistory(entry);
+
+    setStatus("Transcribing…");
+    const meta = await pollRecording(upload.id);
+    await updateHistoryEntry(upload.id, { status: meta.status });
+
+    if (meta.status === "failed") {
+      throw new Error(meta.error ?? "Transcription failed");
+    }
+
+    setStatus("Transcript ready");
+    await renderHistory();
+  } catch (err) {
+    setStatus(err instanceof Error ? err.message : String(err), true);
+  } finally {
+    startBtn.disabled = false;
+    stopBtn.disabled = false;
+  }
+}
+
+function enterRecordingUi(startedAt: number): void {
+  recordingStartedAt = startedAt;
+  startBtn.classList.add("hidden");
+  stopBtn.classList.remove("hidden");
+  recordingIndicator.classList.remove("hidden");
+  updateTimer();
+  timerInterval = window.setInterval(updateTimer, 1000);
+}
+
+function exitRecordingUi(): void {
+  startBtn.classList.remove("hidden");
+  stopBtn.classList.add("hidden");
+  recordingIndicator.classList.add("hidden");
+  if (timerInterval) {
+    clearInterval(timerInterval);
+    timerInterval = undefined;
+  }
+}
+
+function updateTimer(): void {
+  if (!recordingStartedAt) {
+    return;
+  }
+  const elapsed = Math.floor((Date.now() - recordingStartedAt) / 1000);
+  const m = Math.floor(elapsed / 60);
+  const s = elapsed % 60;
+  timerEl.textContent = `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function setStatus(text: string, isError = false): void {
+  statusText.textContent = text;
+  statusText.classList.toggle("error", isError);
+}
+
+async function renderHistory(): Promise<void> {
+  const history = await getHistory();
+
+  historyList.innerHTML = "";
+  if (history.length === 0) {
+    const li = document.createElement("li");
+    li.textContent = "No transcripts yet.";
+    historyList.appendChild(li);
+    return;
+  }
+
+  for (const item of history) {
+    const li = document.createElement("li");
+
+    const title = document.createElement("div");
+    title.className = "history-title";
+    title.textContent = item.meetingTitle ?? "Google Meet";
+
+    const meta = document.createElement("div");
+    meta.className = "history-meta";
+    const when = new Date(item.startedAt).toLocaleString();
+    meta.textContent = `${when} · ${item.status}`;
+
+    li.appendChild(title);
+    li.appendChild(meta);
+
+    if (item.status === "completed") {
+      const links = document.createElement("div");
+      links.className = "history-links";
+
+      const txt = document.createElement("button");
+      txt.type = "button";
+      txt.className = "link-btn";
+      txt.textContent = "Download TXT";
+      txt.addEventListener("click", () => {
+        void downloadTranscript(item.id, "txt").catch((err) =>
+          setStatus(err instanceof Error ? err.message : String(err), true),
+        );
+      });
+
+      const json = document.createElement("button");
+      json.type = "button";
+      json.className = "link-btn";
+      json.textContent = "Download JSON";
+      json.addEventListener("click", () => {
+        void downloadTranscript(item.id, "json").catch((err) =>
+          setStatus(err instanceof Error ? err.message : String(err), true),
+        );
+      });
+
+      links.appendChild(txt);
+      links.appendChild(json);
+      li.appendChild(links);
+    }
+
+    historyList.appendChild(li);
+  }
+}

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cognium Meet Settings</title>
+    <link rel="stylesheet" href="./options.css" />
+  </head>
+  <body>
+    <main class="container">
+      <h1>Cognium Meet Settings</h1>
+      <p class="hint">
+        Configure the transcription API. Your OpenAI key stays on the server — only
+        the API URL and bearer token are stored here.
+      </p>
+
+      <form id="settings-form">
+        <label>
+          API URL
+          <input id="api-url" type="url" required placeholder="http://localhost:3847" />
+        </label>
+
+        <label>
+          API Token
+          <input id="api-token" type="password" placeholder="Bearer token" />
+        </label>
+
+        <button type="submit">Save</button>
+      </form>
+
+      <p id="save-status" class="hidden"></p>
+
+      <section class="legal">
+        <h2>Recording consent</h2>
+        <p>
+          You are responsible for informing all meeting participants that the call
+          is being recorded, in accordance with local laws and your organization’s
+          policies.
+        </p>
+      </section>
+    </main>
+    <script type="module" src="./options.ts"></script>
+  </body>
+</html>

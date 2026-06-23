@@ -1,0 +1,155 @@
+import { Hono } from "hono";
+import { cors } from "hono/cors";
+import { v4 as uuidv4 } from "uuid";
+import type { RecordingMeta } from "@cognium/meet-shared";
+import type { TranscriptionProvider } from "./transcription/provider.js";
+import { RecordingStore } from "./storage/recording-store.js";
+
+interface AppDeps {
+  store: RecordingStore;
+  transcription: TranscriptionProvider;
+  apiToken?: string;
+  deleteAudioAfterTranscription: boolean;
+}
+
+export function createApp(deps: AppDeps) {
+  const app = new Hono();
+
+  app.use(
+    "*",
+    cors({
+      origin: (origin) => origin ?? "*",
+      allowHeaders: ["Authorization", "Content-Type"],
+      allowMethods: ["GET", "POST", "OPTIONS"],
+    }),
+  );
+
+  app.use("*", async (c, next) => {
+    if (c.req.path === "/health") {
+      await next();
+      return;
+    }
+    if (!deps.apiToken) {
+      await next();
+      return;
+    }
+    const auth = c.req.header("Authorization");
+    if (auth !== `Bearer ${deps.apiToken}`) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    await next();
+  });
+
+  app.get("/health", (c) => c.json({ ok: true }));
+
+  app.post("/v1/recordings", async (c) => {
+    const form = await c.req.parseBody();
+    const audio = form.audio;
+
+    if (!(audio instanceof File)) {
+      return c.json({ error: "Missing audio file" }, 400);
+    }
+
+    const id = uuidv4();
+    const meetingTitle =
+      typeof form.meetingTitle === "string" ? form.meetingTitle : undefined;
+    const startedAt =
+      typeof form.startedAt === "string"
+        ? form.startedAt
+        : new Date().toISOString();
+    const durationMs =
+      typeof form.durationMs === "string"
+        ? Number.parseInt(form.durationMs, 10)
+        : undefined;
+
+    const buffer = Buffer.from(await audio.arrayBuffer());
+    await deps.store.saveAudio(id, buffer);
+
+    const meta: RecordingMeta = {
+      id,
+      meetingTitle,
+      startedAt,
+      durationMs: Number.isFinite(durationMs) ? durationMs : undefined,
+      status: "processing",
+    };
+    await deps.store.saveMeta(meta);
+
+    void processRecording(deps, id).catch(async (err) => {
+      const failed: RecordingMeta = {
+        ...meta,
+        status: "failed",
+        error: err instanceof Error ? err.message : String(err),
+      };
+      await deps.store.saveMeta(failed);
+    });
+
+    return c.json({ id, status: meta.status }, 202);
+  });
+
+  app.get("/v1/recordings/:id", async (c) => {
+    const id = c.req.param("id");
+    const meta = await deps.store.getMeta(id);
+    if (!meta) {
+      return c.json({ error: "Not found" }, 404);
+    }
+    return c.json(meta);
+  });
+
+  app.get("/v1/recordings/:id/transcript.txt", async (c) => {
+    const id = c.req.param("id");
+    const meta = await deps.store.getMeta(id);
+    if (!meta) {
+      return c.json({ error: "Not found" }, 404);
+    }
+    if (meta.status !== "completed") {
+      return c.json({ error: "Transcript not ready", status: meta.status }, 409);
+    }
+    const txt = await deps.store.readTranscriptTxt(id);
+    if (!txt) {
+      return c.json({ error: "Transcript missing" }, 404);
+    }
+    return c.text(txt, 200, {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${id}.txt"`,
+    });
+  });
+
+  app.get("/v1/recordings/:id/transcript.json", async (c) => {
+    const id = c.req.param("id");
+    const meta = await deps.store.getMeta(id);
+    if (!meta) {
+      return c.json({ error: "Not found" }, 404);
+    }
+    if (meta.status !== "completed") {
+      return c.json({ error: "Transcript not ready", status: meta.status }, 409);
+    }
+    const json = await deps.store.readTranscriptJson(id);
+    if (!json) {
+      return c.json({ error: "Transcript missing" }, 404);
+    }
+    return c.json(json);
+  });
+
+  return app;
+}
+
+async function processRecording(deps: AppDeps, id: string): Promise<void> {
+  const meta = await deps.store.getMeta(id);
+  if (!meta) {
+    throw new Error(`Recording ${id} not found`);
+  }
+
+  const result = await deps.transcription.transcribe(deps.store.audioPath(id));
+  await deps.store.saveTranscript(id, result);
+
+  const completed: RecordingMeta = {
+    ...meta,
+    status: "completed",
+    language: result.language,
+  };
+  await deps.store.saveMeta(completed);
+
+  if (deps.deleteAudioAfterTranscription) {
+    await deps.store.deleteAudio(id);
+  }
+}

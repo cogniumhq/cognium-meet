@@ -1,0 +1,169 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+  width: 320px;
+}
+
+.container {
+  padding: 16px;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.subtitle {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+#status-section {
+  margin: 16px 0;
+  padding: 12px;
+  background: #1e293b;
+  border-radius: 8px;
+}
+
+#recording-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ef4444;
+  animation: pulse 1.2s infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+#status-text {
+  margin: 0;
+  font-size: 13px;
+  color: #cbd5e1;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+button {
+  border: none;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  background: #2563eb;
+  color: white;
+}
+
+button:hover {
+  background: #1d4ed8;
+}
+
+button.danger {
+  background: #dc2626;
+}
+
+button.danger:hover {
+  background: #b91c1c;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.history-header h2 {
+  margin: 0;
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+#options-link {
+  font-size: 12px;
+  color: #60a5fa;
+  text-decoration: none;
+}
+
+#history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+#history-list li {
+  padding: 8px 0;
+  border-top: 1px solid #334155;
+  font-size: 12px;
+}
+
+#history-list li:first-child {
+  border-top: none;
+}
+
+.history-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.history-meta {
+  color: #94a3b8;
+  margin-bottom: 4px;
+}
+
+.history-links .link-btn {
+  background: transparent;
+  color: #60a5fa;
+  padding: 0;
+  margin-right: 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.history-links .link-btn:hover {
+  background: transparent;
+  text-decoration: underline;
+}
+
+.error {
+  color: #fca5a5;
+}
