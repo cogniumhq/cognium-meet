@@ -150,6 +150,13 @@ button:disabled {
   margin-bottom: 4px;
 }
 
+.history-error {
+  color: #fca5a5;
+  font-size: 11px;
+  margin-bottom: 4px;
+  word-break: break-word;
+}
+
 .history-links .link-btn {
   background: transparent;
   color: #60a5fa;

@@ -24,6 +24,7 @@ export interface StoredRecording {
   startedAt: string;
   durationMs?: number;
   status: string;
+  error?: string;
   createdAt: string;
 }
 

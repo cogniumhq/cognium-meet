@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from "uuid";
 import type { RecordingMeta } from "@cognium/meet-shared";
 import type { TranscriptionProvider } from "./transcription/provider.js";
 import { RecordingStore } from "./storage/recording-store.js";
+import { isLikelyAudio } from "./transcription/prepare-audio.js";
 
 interface AppDeps {
   store: RecordingStore;
@@ -43,26 +44,69 @@ export function createApp(deps: AppDeps) {
   app.get("/health", (c) => c.json({ ok: true }));
 
   app.post("/v1/recordings", async (c) => {
-    const form = await c.req.parseBody();
-    const audio = form.audio;
+    const contentType = c.req.header("content-type") ?? "";
+    let buffer: Buffer;
+    let meetingTitle: string | undefined;
+    let startedAt: string;
+    let durationMs: number | undefined;
 
-    if (!(audio instanceof File)) {
-      return c.json({ error: "Missing audio file" }, 400);
+    if (contentType.includes("multipart/form-data")) {
+      const form = await c.req.parseBody();
+      const audio = form.audio;
+
+      if (!(audio instanceof File)) {
+        return c.json({ error: "Missing audio file" }, 400);
+      }
+
+      meetingTitle =
+        typeof form.meetingTitle === "string" ? form.meetingTitle : undefined;
+      startedAt =
+        typeof form.startedAt === "string"
+          ? form.startedAt
+          : new Date().toISOString();
+      durationMs =
+        typeof form.durationMs === "string"
+          ? Number.parseInt(form.durationMs, 10)
+          : undefined;
+
+      buffer = Buffer.from(await audio.arrayBuffer());
+    } else {
+      let body: {
+        audioBase64?: string;
+        meetingTitle?: string;
+        startedAt?: string;
+        durationMs?: number;
+      };
+      try {
+        body = await c.req.json();
+      } catch {
+        return c.json(
+          { error: "Invalid request body", detail: "Expected JSON with audioBase64" },
+          400,
+        );
+      }
+
+      if (!body.audioBase64) {
+        return c.json({ error: "Missing audioBase64" }, 400);
+      }
+
+      buffer = Buffer.from(body.audioBase64, "base64");
+      meetingTitle = body.meetingTitle;
+      startedAt = body.startedAt ?? new Date().toISOString();
+      durationMs = body.durationMs;
+    }
+
+    if (!isLikelyAudio(buffer)) {
+      return c.json(
+        {
+          error: "Invalid audio file",
+          detail: `Expected WebM/WAV/Ogg audio, got ${buffer.length} bytes`,
+        },
+        400,
+      );
     }
 
     const id = uuidv4();
-    const meetingTitle =
-      typeof form.meetingTitle === "string" ? form.meetingTitle : undefined;
-    const startedAt =
-      typeof form.startedAt === "string"
-        ? form.startedAt
-        : new Date().toISOString();
-    const durationMs =
-      typeof form.durationMs === "string"
-        ? Number.parseInt(form.durationMs, 10)
-        : undefined;
-
-    const buffer = Buffer.from(await audio.arrayBuffer());
     await deps.store.saveAudio(id, buffer);
 
     const meta: RecordingMeta = {

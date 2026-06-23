@@ -4,7 +4,7 @@ import {
   updateHistoryEntry,
   type StoredRecording,
 } from "../lib/storage.js";
-import { downloadTranscript, pollRecording, uploadRecording } from "../lib/upload.js";
+import { downloadTranscript, pollRecording } from "../lib/upload.js";
 
 const startBtn = document.getElementById("start-btn") as HTMLButtonElement;
 const stopBtn = document.getElementById("stop-btn") as HTMLButtonElement;
@@ -59,7 +59,11 @@ async function startRecording(): Promise<void> {
 
     recordingStartedAt = response.startedAt as number;
     enterRecordingUi(recordingStartedAt);
-    setStatus(`Recording: ${response.meetingTitle ?? "Google Meet"}`);
+    const micNote = response.includedMic
+      ? "tab + mic"
+      : "tab audio only — enable mic in Settings";
+    setStatus(`Recording (${micNote})`, !response.includedMic);
+    startBtn.disabled = false;
   } catch (err) {
     setStatus(err instanceof Error ? err.message : String(err), true);
     startBtn.disabled = false;
@@ -68,45 +72,48 @@ async function startRecording(): Promise<void> {
 
 async function stopRecording(): Promise<void> {
   stopBtn.disabled = true;
-  setStatus("Stopping and uploading…");
+  setStatus("Stopping recording…");
 
   try {
     const response = await chrome.runtime.sendMessage({ type: "STOP_RECORDING" });
+    if (!response) {
+      throw new Error("No response from background worker — try reloading the extension");
+    }
     if (response?.type === "RECORDING_ERROR") {
       throw new Error(response.error);
     }
 
     exitRecordingUi();
-    setStatus("Uploading audio…");
 
-    const upload = await uploadRecording({
-      blob: response.blob,
-      meetingTitle: response.meetingTitle,
-      startedAt: response.startedAt,
-      durationMs: response.durationMs,
-    });
+    if (!response.recordingId) {
+      throw new Error("Upload did not return a recording id");
+    }
 
     const entry: StoredRecording = {
-      id: upload.id,
+      id: response.recordingId,
       meetingTitle: response.meetingTitle,
       startedAt: new Date(response.startedAt).toISOString(),
       durationMs: response.durationMs,
-      status: upload.status,
+      status: "processing",
       createdAt: new Date().toISOString(),
     };
     await addToHistory(entry);
 
     setStatus("Transcribing…");
-    const meta = await pollRecording(upload.id);
-    await updateHistoryEntry(upload.id, { status: meta.status });
+    const meta = await pollRecording(response.recordingId);
+    await updateHistoryEntry(response.recordingId, {
+      status: meta.status,
+      error: meta.error,
+    });
 
     if (meta.status === "failed") {
       throw new Error(meta.error ?? "Transcription failed");
     }
 
-    setStatus("Transcript ready");
+    setStatus("Transcript ready — see Recent transcripts below");
     await renderHistory();
   } catch (err) {
+    exitRecordingUi();
     setStatus(err instanceof Error ? err.message : String(err), true);
   } finally {
     startBtn.disabled = false;
@@ -173,6 +180,13 @@ async function renderHistory(): Promise<void> {
 
     li.appendChild(title);
     li.appendChild(meta);
+
+    if (item.status === "failed" && item.error) {
+      const err = document.createElement("div");
+      err.className = "history-error";
+      err.textContent = item.error;
+      li.appendChild(err);
+    }
 
     if (item.status === "completed") {
       const links = document.createElement("div");

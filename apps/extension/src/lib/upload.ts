@@ -1,4 +1,9 @@
 import type { RecordingMeta } from "@cognium/meet-shared";
+import {
+  bytesToBase64,
+  isLikelyAudio,
+  normalizeAudioBytes,
+} from "./audio-bytes.js";
 import { getSettings } from "./storage.js";
 
 export interface UploadResult {
@@ -7,21 +12,22 @@ export interface UploadResult {
 }
 
 export async function uploadRecording(params: {
-  blob: Blob;
+  bytes: Uint8Array;
+  mimeType?: string;
   meetingTitle?: string;
   startedAt: number;
   durationMs: number;
 }): Promise<UploadResult> {
-  const settings = await getSettings();
-  const form = new FormData();
-  form.append("audio", params.blob, "recording.webm");
-  if (params.meetingTitle) {
-    form.append("meetingTitle", params.meetingTitle);
+  if (!isLikelyAudio(params.bytes)) {
+    throw new Error(
+      `Invalid audio data (${params.bytes.length} bytes) — reload the extension and try again`,
+    );
   }
-  form.append("startedAt", new Date(params.startedAt).toISOString());
-  form.append("durationMs", String(params.durationMs));
 
-  const headers: Record<string, string> = {};
+  const settings = await getSettings();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
   if (settings.apiToken) {
     headers.Authorization = `Bearer ${settings.apiToken}`;
   }
@@ -29,7 +35,13 @@ export async function uploadRecording(params: {
   const response = await fetch(`${settings.apiUrl}/v1/recordings`, {
     method: "POST",
     headers,
-    body: form,
+    body: JSON.stringify({
+      audioBase64: bytesToBase64(params.bytes),
+      mimeType: params.mimeType ?? "audio/webm",
+      meetingTitle: params.meetingTitle,
+      startedAt: new Date(params.startedAt).toISOString(),
+      durationMs: params.durationMs,
+    }),
   });
 
   if (!response.ok) {

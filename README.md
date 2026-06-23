@@ -67,6 +67,18 @@ Optional hot-reload: `pnpm --filter @cognium/meet-extension dev:watch`
 5. Open extension **Settings** and set:
    - API URL: `http://localhost:3847`
    - API Token: same value as `API_TOKEN` in `.env`
+   - Click **Grant microphone access** (see below)
+
+### Microphone capture
+
+`chrome.tabCapture` records only what the meeting tab plays through your speakers —
+that is, the **other** participants. Google Meet does not loop your own microphone
+back into your tab, so to also record **your** voice the recorder mixes in your
+microphone.
+
+Click **Grant microphone access** in Settings once. After that the offscreen
+recorder mixes mic + tab audio automatically. Without it, recordings contain only
+remote participants (and a solo test will be silent — Whisper returns just `you`).
 
 ## Manual E2E test
 
@@ -87,6 +99,7 @@ Optional hot-reload: `pnpm --filter @cognium/meet-extension dev:watch`
 | Start on non-Meet tab | Error: open a Google Meet tab |
 | Close Meet tab while recording | Recording stops; error on stop if tab gone |
 | Empty / very short recording | Upload may fail or Whisper returns minimal text |
+| Solo meeting without mic grant | Silent audio; transcript is just `you` (grant mic) |
 | API down during upload | Popup shows upload error |
 
 ## API endpoints

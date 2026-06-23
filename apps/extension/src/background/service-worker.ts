@@ -1,3 +1,10 @@
+import { OFFSCREEN_TARGET } from "../lib/messages.js";
+import {
+  isLikelyAudio,
+  normalizeAudioBytes,
+} from "../lib/audio-bytes.js";
+import { uploadRecording } from "../lib/upload.js";
+
 const OFFSCREEN_URL = chrome.runtime.getURL("src/offscreen/offscreen.html");
 
 export {};
@@ -11,7 +18,7 @@ let recordingState = {
 };
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message.target === "offscreen") {
+  if (message.target === OFFSCREEN_TARGET) {
     return false;
   }
   void handleMessage(message, sendResponse);
@@ -58,12 +65,20 @@ async function handleMessage(
           resolve(id);
         });
       });
+
       await ensureOffscreenDocument();
-      await chrome.runtime.sendMessage({
+      const startResult = await sendToOffscreen<{
+        type: string;
+        error?: string;
+        includedMic?: boolean;
+      }>({
         type: "OFFSCREEN_START",
         streamId,
-        target: "offscreen",
       });
+
+      if (startResult.type === "RECORDING_ERROR") {
+        throw new Error(startResult.error ?? "Failed to start offscreen recorder");
+      }
 
       recordingState = {
         isRecording: true,
@@ -73,11 +88,12 @@ async function handleMessage(
         lastError: undefined,
       };
 
-      await chrome.tabs.sendMessage(tabId, { type: "SHOW_CONSENT_BANNER" });
+      await chrome.tabs.sendMessage(tabId, { type: "SHOW_CONSENT_BANNER" }).catch(() => {});
       sendResponse({
         type: "RECORDING_STARTED",
         startedAt: recordingState.startedAt,
         meetingTitle: recordingState.meetingTitle,
+        includedMic: startResult.includedMic ?? false,
       });
       return;
     }
@@ -88,15 +104,35 @@ async function handleMessage(
         return;
       }
 
-      const response = (await chrome.runtime.sendMessage({
-        type: "OFFSCREEN_STOP",
-        target: "offscreen",
-      })) as { type: string; blob?: Blob; error?: string };
+      const response = await sendToOffscreen<{
+        type: string;
+        audioBase64?: string;
+        byteLength?: number;
+        mimeType?: string;
+        error?: string;
+      }>({ type: "OFFSCREEN_STOP" });
 
-      if (response.type === "RECORDING_ERROR" || !response.blob) {
+      if (response.type === "RECORDING_ERROR" || !response.audioBase64) {
         const error = response.error ?? "Failed to stop recording";
         recordingState.lastError = error;
         sendResponse({ type: "RECORDING_ERROR", error });
+        return;
+      }
+
+      const audioBytes = normalizeAudioBytes(response.audioBase64);
+      if (response.byteLength && audioBytes.length !== response.byteLength) {
+        sendResponse({
+          type: "RECORDING_ERROR",
+          error: `Audio corrupted in transfer (${audioBytes.length}/${response.byteLength} bytes)`,
+        });
+        return;
+      }
+
+      if (!isLikelyAudio(audioBytes)) {
+        sendResponse({
+          type: "RECORDING_ERROR",
+          error: `Invalid audio data (${audioBytes.length} bytes)`,
+        });
         return;
       }
 
@@ -119,9 +155,17 @@ async function handleMessage(
 
       await closeOffscreenDocument();
 
+      const upload = await uploadRecording({
+        bytes: audioBytes,
+        mimeType: response.mimeType ?? "audio/webm",
+        meetingTitle,
+        startedAt,
+        durationMs,
+      });
+
       sendResponse({
         type: "RECORDING_STOPPED",
-        blob: response.blob,
+        recordingId: upload.id,
         durationMs,
         meetingTitle,
         startedAt,
@@ -138,6 +182,27 @@ async function handleMessage(
   }
 }
 
+async function sendToOffscreen<T>(message: {
+  type: string;
+  streamId?: string;
+}): Promise<T> {
+  const payload = { ...message, target: OFFSCREEN_TARGET };
+
+  for (let attempt = 0; attempt < 20; attempt++) {
+    try {
+      const response = await chrome.runtime.sendMessage(payload);
+      if (response !== undefined) {
+        return response as T;
+      }
+    } catch {
+      // Offscreen document may still be loading.
+    }
+    await sleep(100);
+  }
+
+  throw new Error("Offscreen recorder not ready");
+}
+
 async function ensureOffscreenDocument(): Promise<void> {
   const existing = await chrome.runtime.getContexts({
     contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
@@ -151,6 +216,8 @@ async function ensureOffscreenDocument(): Promise<void> {
     reasons: [chrome.offscreen.Reason.USER_MEDIA],
     justification: "Record Google Meet tab audio for transcription",
   });
+
+  await sleep(200);
 }
 
 async function closeOffscreenDocument(): Promise<void> {
@@ -160,6 +227,10 @@ async function closeOffscreenDocument(): Promise<void> {
   if (existing.length > 0) {
     await chrome.offscreen.closeDocument();
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {
