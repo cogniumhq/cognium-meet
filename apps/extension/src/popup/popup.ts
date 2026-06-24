@@ -31,7 +31,10 @@ async function init(): Promise<void> {
   const status = await chrome.runtime.sendMessage({ type: "GET_STATUS" });
   if (status?.isRecording && status.startedAt) {
     enterRecordingUi(status.startedAt);
-    setStatus("Recording in progress…");
+    const micNote = status.includedMic
+      ? "tab + mic"
+      : "tab audio only — enable mic in Settings";
+    setStatus(`Recording (${micNote})`, !status.includedMic);
   }
 
   await renderHistory();
@@ -54,7 +57,16 @@ async function startRecording(): Promise<void> {
     });
 
     if (response?.type === "RECORDING_ERROR") {
-      throw new Error(response.error);
+      const error = response.error ?? "Recording failed";
+      if (error.includes("Already recording")) {
+        const status = await chrome.runtime.sendMessage({ type: "GET_STATUS" });
+        if (status?.isRecording && status.startedAt) {
+          enterRecordingUi(status.startedAt);
+          setStatus("Recording already in progress");
+          return;
+        }
+      }
+      throw new Error(error);
     }
 
     recordingStartedAt = response.startedAt as number;
@@ -125,7 +137,11 @@ function enterRecordingUi(startedAt: number): void {
   recordingStartedAt = startedAt;
   startBtn.classList.add("hidden");
   stopBtn.classList.remove("hidden");
+  stopBtn.disabled = false;
   recordingIndicator.classList.remove("hidden");
+  if (timerInterval) {
+    clearInterval(timerInterval);
+  }
   updateTimer();
   timerInterval = window.setInterval(updateTimer, 1000);
 }

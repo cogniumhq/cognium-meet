@@ -7,6 +7,7 @@ let tabStream: MediaStream | null = null;
 let micStream: MediaStream | null = null;
 let audioContext: AudioContext | null = null;
 let includedMic = false;
+let isRecording = false;
 
 export {};
 
@@ -24,6 +25,17 @@ async function handleMessage(
   sendResponse: (response: unknown) => void,
 ): Promise<void> {
   try {
+    if (message.type === "OFFSCREEN_STATUS") {
+      sendResponse({ type: "OFFSCREEN_STATUS", isRecording, includedMic });
+      return;
+    }
+
+    if (message.type === "OFFSCREEN_ABORT") {
+      abortRecording();
+      sendResponse({ type: "OFFSCREEN_ABORTED" });
+      return;
+    }
+
     if (message.type === "OFFSCREEN_START") {
       await startRecording(message.streamId!);
       sendResponse({ type: "OFFSCREEN_READY", includedMic });
@@ -52,10 +64,11 @@ async function handleMessage(
 }
 
 async function startRecording(streamId: string): Promise<void> {
-  if (mediaRecorder && mediaRecorder.state !== "inactive") {
-    await stopRecording().catch(() => {});
+  if (isRecording) {
+    return;
   }
-  cleanupStreams();
+
+  abortRecording();
 
   tabStream = await navigator.mediaDevices.getUserMedia({
     audio: {
@@ -67,9 +80,6 @@ async function startRecording(streamId: string): Promise<void> {
     video: false,
   });
 
-  // Also capture the local microphone (the local speaker's own voice),
-  // since Google Meet does not play your own mic back into the tab.
-  // This is optional: if mic permission is not granted, we record tab audio only.
   includedMic = false;
   try {
     micStream = await navigator.mediaDevices.getUserMedia({
@@ -90,8 +100,6 @@ async function startRecording(streamId: string): Promise<void> {
 
   const tabSource = audioContext.createMediaStreamSource(tabStream);
   tabSource.connect(destination);
-  // Keep playing the meeting audio to the user's speakers; tab capture
-  // would otherwise silence the tab for the user.
   tabSource.connect(audioContext.destination);
 
   if (micStream) {
@@ -115,6 +123,7 @@ async function startRecording(streamId: string): Promise<void> {
   };
 
   mediaRecorder.start(5000);
+  isRecording = true;
 }
 
 async function stopRecording(): Promise<Blob> {
@@ -140,12 +149,27 @@ async function stopRecording(): Promise<Blob> {
   cleanupStreams();
   mediaRecorder = null;
   chunks = [];
+  isRecording = false;
 
   if (blob.size === 0) {
     throw new Error("Recording is empty");
   }
 
   return blob;
+}
+
+function abortRecording(): void {
+  if (mediaRecorder && mediaRecorder.state !== "inactive") {
+    try {
+      mediaRecorder.stop();
+    } catch {
+      // ignore
+    }
+  }
+  mediaRecorder = null;
+  chunks = [];
+  cleanupStreams();
+  isRecording = false;
 }
 
 function cleanupStreams(): void {
