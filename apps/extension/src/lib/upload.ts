@@ -52,6 +52,42 @@ export async function uploadRecording(params: {
   return (await response.json()) as UploadResult;
 }
 
+export async function fetchRecordingStatus(id: string): Promise<RecordingMeta> {
+  const settings = await getSettings();
+  const headers: Record<string, string> = {};
+  if (settings.apiToken) {
+    headers.Authorization = `Bearer ${settings.apiToken}`;
+  }
+
+  const response = await fetch(`${settings.apiUrl}/v1/recordings/${id}`, {
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`Status check failed (${response.status})`);
+  }
+  return (await response.json()) as RecordingMeta;
+}
+
+export async function retryRecording(id: string): Promise<RecordingMeta> {
+  const settings = await getSettings();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (settings.apiToken) {
+    headers.Authorization = `Bearer ${settings.apiToken}`;
+  }
+
+  const response = await fetch(`${settings.apiUrl}/v1/recordings/${id}/retry`, {
+    method: "POST",
+    headers,
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Retry failed (${response.status}): ${text}`);
+  }
+  return (await response.json()) as RecordingMeta;
+}
+
 export async function pollRecording(
   id: string,
   opts?: { intervalMs?: number; timeoutMs?: number },

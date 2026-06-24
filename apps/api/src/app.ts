@@ -5,12 +5,17 @@ import type { RecordingMeta } from "@cognium/meet-shared";
 import type { TranscriptionProvider } from "./transcription/provider.js";
 import { RecordingStore } from "./storage/recording-store.js";
 import { isLikelyAudio } from "./transcription/prepare-audio.js";
+import {
+  enqueueTranscription,
+  isProcessingStale,
+  markRecordingFailed,
+  processRecording,
+  type ProcessingDeps,
+} from "./transcription/process-recording.js";
 
-interface AppDeps {
-  store: RecordingStore;
+interface AppDeps extends ProcessingDeps {
   transcription: TranscriptionProvider;
   apiToken?: string;
-  deleteAudioAfterTranscription: boolean;
 }
 
 export function createApp(deps: AppDeps) {
@@ -115,19 +120,45 @@ export function createApp(deps: AppDeps) {
       startedAt,
       durationMs: Number.isFinite(durationMs) ? durationMs : undefined,
       status: "processing",
+      processingStartedAt: new Date().toISOString(),
     };
     await deps.store.saveMeta(meta);
 
-    void processRecording(deps, id).catch(async (err) => {
-      const failed: RecordingMeta = {
-        ...meta,
-        status: "failed",
-        error: err instanceof Error ? err.message : String(err),
-      };
-      await deps.store.saveMeta(failed);
-    });
+    enqueueTranscription(deps, id);
 
     return c.json({ id, status: meta.status }, 202);
+  });
+
+  app.post("/v1/recordings/:id/retry", async (c) => {
+    const id = c.req.param("id");
+    const meta = await deps.store.getMeta(id);
+    if (!meta) {
+      return c.json({ error: "Not found" }, 404);
+    }
+
+    if (meta.status === "completed") {
+      return c.json({ id, status: meta.status });
+    }
+
+    if (!(await deps.store.audioExists(id))) {
+      return c.json(
+        {
+          error: "Audio no longer available",
+          detail: "The original recording was deleted after a previous attempt",
+        },
+        410,
+      );
+    }
+
+    await deps.store.saveMeta({
+      ...meta,
+      status: "processing",
+      error: undefined,
+      processingStartedAt: new Date().toISOString(),
+    });
+
+    enqueueTranscription(deps, id);
+    return c.json({ id, status: "processing" }, 202);
   });
 
   app.get("/v1/recordings/:id", async (c) => {
@@ -136,6 +167,27 @@ export function createApp(deps: AppDeps) {
     if (!meta) {
       return c.json({ error: "Not found" }, 404);
     }
+
+    if (isProcessingStale(meta)) {
+      if (await deps.store.audioExists(id)) {
+        enqueueTranscription(deps, id);
+        return c.json({
+          ...meta,
+          status: "processing",
+          error: undefined,
+        });
+      }
+
+      const failed: RecordingMeta = {
+        ...meta,
+        status: "failed",
+        error: "Transcription timed out — audio is no longer available",
+        processingStartedAt: undefined,
+      };
+      await deps.store.saveMeta(failed);
+      return c.json(failed);
+    }
+
     return c.json(meta);
   });
 
@@ -175,25 +227,4 @@ export function createApp(deps: AppDeps) {
   });
 
   return app;
-}
-
-async function processRecording(deps: AppDeps, id: string): Promise<void> {
-  const meta = await deps.store.getMeta(id);
-  if (!meta) {
-    throw new Error(`Recording ${id} not found`);
-  }
-
-  const result = await deps.transcription.transcribe(deps.store.audioPath(id));
-  await deps.store.saveTranscript(id, result);
-
-  const completed: RecordingMeta = {
-    ...meta,
-    status: "completed",
-    language: result.language,
-  };
-  await deps.store.saveMeta(completed);
-
-  if (deps.deleteAudioAfterTranscription) {
-    await deps.store.deleteAudio(id);
-  }
 }

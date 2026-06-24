@@ -2,6 +2,7 @@ import "dotenv/config";
 import { serve } from "@hono/node-server";
 import { join } from "node:path";
 import { createApp } from "./app.js";
+import { resumePendingRecordings } from "./transcription/process-recording.js";
 import { OpenAIWhisperProvider } from "./transcription/openai-whisper.js";
 import { RecordingStore } from "./storage/recording-store.js";
 
@@ -22,12 +23,16 @@ const transcription = new OpenAIWhisperProvider(openaiKey);
 const deleteAudioAfterTranscription =
   process.env.DELETE_AUDIO_AFTER_TRANSCRIPTION !== "false";
 
-const app = createApp({
+const deps = {
   store,
   transcription,
   apiToken,
   deleteAudioAfterTranscription,
-});
+};
+
+const app = createApp(deps);
+
+void resumePendingRecordings(deps);
 
 serve({ fetch: app.fetch, port }, () => {
   console.log(`cognium-meet API listening on http://localhost:${port}`);

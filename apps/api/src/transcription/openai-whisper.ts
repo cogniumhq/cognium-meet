@@ -7,12 +7,17 @@ import {
   whisperFilename,
   whisperMimeType,
 } from "./prepare-audio.js";
+import { withRetries } from "./retry.js";
 
 export class OpenAIWhisperProvider implements TranscriptionProvider {
   private readonly client: OpenAI;
 
   constructor(apiKey: string) {
-    this.client = new OpenAI({ apiKey });
+    this.client = new OpenAI({
+      apiKey,
+      maxRetries: 0,
+      timeout: 5 * 60 * 1000,
+    });
   }
 
   async transcribe(
@@ -26,13 +31,17 @@ export class OpenAIWhisperProvider implements TranscriptionProvider {
     });
 
     try {
-      const response = await this.client.audio.transcriptions.create({
-        file,
-        model: "whisper-1",
-        response_format: "verbose_json",
-        timestamp_granularities: ["segment"],
-        ...(opts?.language ? { language: opts.language } : {}),
-      });
+      const response = await withRetries(
+        () =>
+          this.client.audio.transcriptions.create({
+            file,
+            model: "whisper-1",
+            response_format: "verbose_json",
+            timestamp_granularities: ["segment"],
+            ...(opts?.language ? { language: opts.language } : {}),
+          }),
+        { attempts: 4, baseDelayMs: 2000 },
+      );
 
       const segments = (response.segments ?? []).map((seg) => ({
         start: seg.start,

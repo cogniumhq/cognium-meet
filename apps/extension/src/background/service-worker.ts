@@ -10,7 +10,12 @@ import {
   saveRecordingState,
   type PersistedRecordingState,
 } from "../lib/recording-state.js";
-import { uploadRecording } from "../lib/upload.js";
+import {
+  addToHistory,
+  updateHistoryEntry,
+  type StoredRecording,
+} from "../lib/storage.js";
+import { pollRecording, uploadRecording } from "../lib/upload.js";
 
 const OFFSCREEN_URL = chrome.runtime.getURL("src/offscreen/offscreen.html");
 
@@ -227,6 +232,17 @@ async function handleStopRecording(
     durationMs,
   });
 
+  const entry: StoredRecording = {
+    id: upload.id,
+    meetingTitle,
+    startedAt: new Date(startedAt).toISOString(),
+    durationMs,
+    status: "processing",
+    createdAt: new Date().toISOString(),
+  };
+  await addToHistory(entry);
+  void trackTranscription(upload.id);
+
   sendResponse({
     type: "RECORDING_STOPPED",
     recordingId: upload.id,
@@ -379,6 +395,24 @@ async function closeOffscreenDocument(): Promise<void> {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function trackTranscription(id: string): Promise<void> {
+  try {
+    const meta = await pollRecording(id, {
+      intervalMs: 3000,
+      timeoutMs: 20 * 60 * 1000,
+    });
+    await updateHistoryEntry(id, {
+      status: meta.status,
+      error: meta.error,
+    });
+  } catch (err) {
+    await updateHistoryEntry(id, {
+      status: "failed",
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {

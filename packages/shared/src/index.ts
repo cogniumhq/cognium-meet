@@ -21,6 +21,7 @@ export interface RecordingMeta {
   status: RecordingStatus;
   error?: string;
   language?: string;
+  processingStartedAt?: string;
 }
 
 export interface ExtensionSettings {

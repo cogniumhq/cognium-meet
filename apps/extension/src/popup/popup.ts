@@ -1,10 +1,13 @@
 import {
-  addToHistory,
   getHistory,
   updateHistoryEntry,
-  type StoredRecording,
 } from "../lib/storage.js";
-import { downloadTranscript, pollRecording } from "../lib/upload.js";
+import {
+  downloadTranscript,
+  fetchRecordingStatus,
+  pollRecording,
+  retryRecording,
+} from "../lib/upload.js";
 
 const startBtn = document.getElementById("start-btn") as HTMLButtonElement;
 const stopBtn = document.getElementById("stop-btn") as HTMLButtonElement;
@@ -37,6 +40,7 @@ async function init(): Promise<void> {
     setStatus(`Recording (${micNote})`, !status.includedMic);
   }
 
+  await refreshStaleHistory();
   await renderHistory();
 }
 
@@ -101,29 +105,10 @@ async function stopRecording(): Promise<void> {
       throw new Error("Upload did not return a recording id");
     }
 
-    const entry: StoredRecording = {
-      id: response.recordingId,
-      meetingTitle: response.meetingTitle,
-      startedAt: new Date(response.startedAt).toISOString(),
-      durationMs: response.durationMs,
-      status: "processing",
-      createdAt: new Date().toISOString(),
-    };
-    await addToHistory(entry);
-
-    setStatus("Transcribing…");
-    const meta = await pollRecording(response.recordingId);
-    await updateHistoryEntry(response.recordingId, {
-      status: meta.status,
-      error: meta.error,
-    });
-
-    if (meta.status === "failed") {
-      throw new Error(meta.error ?? "Transcription failed");
-    }
-
-    setStatus("Transcript ready — see Recent transcripts below");
+    setStatus("Transcribing… — safe to close this popup");
     await renderHistory();
+
+    void waitForTranscription(response.recordingId);
   } catch (err) {
     exitRecordingUi();
     setStatus(err instanceof Error ? err.message : String(err), true);
@@ -171,6 +156,55 @@ function setStatus(text: string, isError = false): void {
   statusText.classList.toggle("error", isError);
 }
 
+async function refreshStaleHistory(): Promise<void> {
+  const history = await getHistory();
+  for (const item of history) {
+    if (item.status !== "processing" && item.status !== "failed") {
+      continue;
+    }
+    try {
+      const meta = await fetchRecordingStatus(item.id);
+      if (meta.status !== item.status || meta.error !== item.error) {
+        await updateHistoryEntry(item.id, {
+          status: meta.status,
+          error: meta.error,
+        });
+      }
+    } catch {
+      // API may be offline; keep cached status.
+    }
+  }
+}
+
+async function waitForTranscription(id: string): Promise<void> {
+  try {
+    const meta = await pollRecording(id, { timeoutMs: 20 * 60 * 1000 });
+    await updateHistoryEntry(id, { status: meta.status, error: meta.error });
+    await renderHistory();
+    if (meta.status === "completed") {
+      setStatus("Transcript ready — see Recent transcripts below");
+      return;
+    }
+    if (meta.status === "failed") {
+      setStatus(meta.error ?? "Transcription failed", true);
+    }
+  } catch {
+    // Background worker continues polling if popup closes.
+  }
+}
+
+async function retryTranscription(id: string): Promise<void> {
+  setStatus("Retrying transcription…");
+  try {
+    await retryRecording(id);
+    await updateHistoryEntry(id, { status: "processing", error: undefined });
+    await renderHistory();
+    await waitForTranscription(id);
+  } catch (err) {
+    setStatus(err instanceof Error ? err.message : String(err), true);
+  }
+}
+
 async function renderHistory(): Promise<void> {
   const history = await getHistory();
 
@@ -197,11 +231,26 @@ async function renderHistory(): Promise<void> {
     li.appendChild(title);
     li.appendChild(meta);
 
-    if (item.status === "failed" && item.error) {
-      const err = document.createElement("div");
-      err.className = "history-error";
-      err.textContent = item.error;
-      li.appendChild(err);
+    if (item.status === "failed") {
+      if (item.error) {
+        const err = document.createElement("div");
+        err.className = "history-error";
+        err.textContent = item.error;
+        li.appendChild(err);
+      }
+
+      const links = document.createElement("div");
+      links.className = "history-links";
+
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "link-btn";
+      retry.textContent = "Retry transcription";
+      retry.addEventListener("click", () => {
+        void retryTranscription(item.id);
+      });
+      links.appendChild(retry);
+      li.appendChild(links);
     }
 
     if (item.status === "completed") {
