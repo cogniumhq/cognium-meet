@@ -1,4 +1,5 @@
 import { blobToBytes, bytesToBase64 } from "../lib/audio-bytes.js";
+import { listAudioInputDevices, micTrackLabel, openMicStream } from "../lib/audio-devices.js";
 import { isOffscreenMessage } from "../lib/messages.js";
 
 let mediaRecorder: MediaRecorder | null = null;
@@ -7,6 +8,7 @@ let tabStream: MediaStream | null = null;
 let micStream: MediaStream | null = null;
 let audioContext: AudioContext | null = null;
 let includedMic = false;
+let micLabel: string | undefined;
 let isRecording = false;
 
 export {};
@@ -21,12 +23,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 async function handleMessage(
-  message: { type: string; streamId?: string },
+  message: { type: string; streamId?: string; micDeviceId?: string },
   sendResponse: (response: unknown) => void,
 ): Promise<void> {
   try {
     if (message.type === "OFFSCREEN_STATUS") {
-      sendResponse({ type: "OFFSCREEN_STATUS", isRecording, includedMic });
+      sendResponse({ type: "OFFSCREEN_STATUS", isRecording, includedMic, micLabel });
       return;
     }
 
@@ -36,9 +38,15 @@ async function handleMessage(
       return;
     }
 
+    if (message.type === "OFFSCREEN_LIST_DEVICES") {
+      const devices = await listAudioInputDevices();
+      sendResponse({ type: "OFFSCREEN_DEVICES", devices });
+      return;
+    }
+
     if (message.type === "OFFSCREEN_START") {
-      await startRecording(message.streamId!);
-      sendResponse({ type: "OFFSCREEN_READY", includedMic });
+      await startRecording(message.streamId!, message.micDeviceId);
+      sendResponse({ type: "OFFSCREEN_READY", includedMic, micLabel });
       return;
     }
 
@@ -63,7 +71,7 @@ async function handleMessage(
   }
 }
 
-async function startRecording(streamId: string): Promise<void> {
+async function startRecording(streamId: string, micDeviceId?: string): Promise<void> {
   if (isRecording) {
     return;
   }
@@ -81,17 +89,21 @@ async function startRecording(streamId: string): Promise<void> {
   });
 
   includedMic = false;
+  micLabel = undefined;
+  micStream = null;
+
+  const wantsMic = Boolean(micDeviceId);
   try {
-    micStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-      },
-      video: false,
-    });
+    micStream = await openMicStream(micDeviceId || undefined);
     includedMic = true;
-  } catch {
+    micLabel = micTrackLabel(micStream);
+  } catch (err) {
+    if (wantsMic) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `Could not open the selected microphone. Pick another device in Settings. (${detail})`,
+      );
+    }
     micStream = null;
   }
 
@@ -177,6 +189,7 @@ function cleanupStreams(): void {
   micStream?.getTracks().forEach((track) => track.stop());
   tabStream = null;
   micStream = null;
+  micLabel = undefined;
   if (audioContext && audioContext.state !== "closed") {
     void audioContext.close();
   }

@@ -27,6 +27,8 @@ export interface RecordingMeta {
 export interface ExtensionSettings {
   apiUrl: string;
   apiToken: string;
+  /** Chrome media deviceId for audioinput; empty = Chrome default */
+  microphoneDeviceId?: string;
 }
 
 export const DEFAULT_API_URL = "http://localhost:3847";

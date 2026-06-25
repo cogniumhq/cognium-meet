@@ -6,6 +6,8 @@ export type MessageType =
   | "OFFSCREEN_STOP"
   | "OFFSCREEN_ABORT"
   | "OFFSCREEN_STATUS"
+  | "OFFSCREEN_LIST_DEVICES"
+  | "OFFSCREEN_DEVICES"
   | "OFFSCREEN_READY"
   | "RECORDING_STARTED"
   | "RECORDING_STOPPED"
@@ -18,6 +20,7 @@ const OFFSCREEN_TYPES = new Set([
   "OFFSCREEN_STOP",
   "OFFSCREEN_ABORT",
   "OFFSCREEN_STATUS",
+  "OFFSCREEN_LIST_DEVICES",
 ]);
 
 export function isOffscreenMessage(
@@ -35,5 +38,6 @@ export interface RecordingState {
   startedAt?: number;
   meetingTitle?: string;
   includedMic?: boolean;
+  micLabel?: string;
   lastError?: string;
 }

@@ -37,8 +37,18 @@
           recorder also captures your microphone to include what you say. Grant
           access once; it is mixed with the meeting audio while recording.
         </p>
+        <p class="hint warn">
+          Chrome uses its own microphone choice, not your Linux/GNOME Sound Input
+          setting. Pick the device below so recording uses the mic you expect.
+        </p>
         <button id="mic-btn" type="button">Grant microphone access</button>
         <p id="mic-status" class="hidden"></p>
+        <label id="mic-device-label" class="hidden">
+          Recording microphone
+          <select id="mic-device" disabled>
+            <option value="">Chrome default</option>
+          </select>
+        </label>
       </section>
 
       <section class="legal">

@@ -22,6 +22,19 @@ let recordingStartedAt: number | undefined;
 
 void init();
 
+function recordingMicNote(status: {
+  includedMic?: boolean;
+  micLabel?: string;
+}): string {
+  if (!status.includedMic) {
+    return "tab audio only — pick mic in Settings";
+  }
+  if (status.micLabel) {
+    return `tab + ${status.micLabel}`;
+  }
+  return "tab + mic";
+}
+
 async function init(): Promise<void> {
   optionsLink.addEventListener("click", (e) => {
     e.preventDefault();
@@ -34,9 +47,7 @@ async function init(): Promise<void> {
   const status = await chrome.runtime.sendMessage({ type: "GET_STATUS" });
   if (status?.isRecording && status.startedAt) {
     enterRecordingUi(status.startedAt);
-    const micNote = status.includedMic
-      ? "tab + mic"
-      : "tab audio only — enable mic in Settings";
+    const micNote = recordingMicNote(status);
     setStatus(`Recording (${micNote})`, !status.includedMic);
   }
 
@@ -75,9 +86,7 @@ async function startRecording(): Promise<void> {
 
     recordingStartedAt = response.startedAt as number;
     enterRecordingUi(recordingStartedAt);
-    const micNote = response.includedMic
-      ? "tab + mic"
-      : "tab audio only — enable mic in Settings";
+    const micNote = recordingMicNote(response);
     setStatus(`Recording (${micNote})`, !response.includedMic);
     startBtn.disabled = false;
   } catch (err) {

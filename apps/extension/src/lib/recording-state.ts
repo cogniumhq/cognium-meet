@@ -4,6 +4,7 @@ export interface PersistedRecordingState {
   startedAt?: number;
   meetingTitle?: string;
   includedMic?: boolean;
+  micLabel?: string;
   lastError?: string;
 }
 

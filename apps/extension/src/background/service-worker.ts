@@ -12,6 +12,7 @@ import {
 } from "../lib/recording-state.js";
 import {
   addToHistory,
+  getSettings,
   updateHistoryEntry,
   type StoredRecording,
 } from "../lib/storage.js";
@@ -82,6 +83,7 @@ async function handleStartRecording(
         startedAt: status.startedAt,
         meetingTitle: status.meetingTitle,
         includedMic: status.includedMic ?? false,
+        micLabel: status.micLabel,
       });
       return;
     }
@@ -127,13 +129,17 @@ async function handleStartRecording(
 
   try {
     await ensureOffscreenDocument();
+    const settings = await getSettings();
+    const micDeviceId = settings.microphoneDeviceId?.trim() || undefined;
     const startResult = await sendToOffscreen<{
       type: string;
       error?: string;
       includedMic?: boolean;
+      micLabel?: string;
     }>({
       type: "OFFSCREEN_START",
       streamId,
+      micDeviceId,
     });
 
     if (startResult.type === "RECORDING_ERROR") {
@@ -147,6 +153,7 @@ async function handleStartRecording(
       startedAt,
       meetingTitle: message.meetingTitle ?? tab.title ?? "Google Meet",
       includedMic: startResult.includedMic ?? false,
+      micLabel: startResult.micLabel,
       lastError: undefined,
     });
 
@@ -156,6 +163,7 @@ async function handleStartRecording(
       startedAt,
       meetingTitle: recordingState.meetingTitle,
       includedMic: recordingState.includedMic ?? false,
+      micLabel: recordingState.micLabel,
     });
   } catch (err) {
     await forceReleaseCapture();
@@ -215,6 +223,7 @@ async function handleStopRecording(
     startedAt: undefined,
     meetingTitle: undefined,
     includedMic: undefined,
+    micLabel: undefined,
     lastError: undefined,
   });
 
@@ -264,11 +273,16 @@ async function getReconciledStatus(): Promise<RecordingState> {
         startedAt: stored.startedAt ?? Date.now(),
         meetingTitle: stored.meetingTitle,
         includedMic: offscreen.includedMic,
+        micLabel: offscreen.micLabel,
       };
       await setRecordingState(repaired);
       return repaired;
     }
-    recordingState = { ...stored, includedMic: offscreen.includedMic };
+    recordingState = {
+      ...stored,
+      includedMic: offscreen.includedMic,
+      micLabel: offscreen.micLabel,
+    };
     return recordingState;
   }
 
@@ -294,12 +308,13 @@ async function setRecordingState(state: PersistedRecordingState): Promise<void> 
 async function queryOffscreenStatus(): Promise<{
   isRecording: boolean;
   includedMic: boolean;
+  micLabel?: string;
 }> {
   const contexts = await chrome.runtime.getContexts({
     contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
   });
   if (contexts.length === 0) {
-    return { isRecording: false, includedMic: false };
+    return { isRecording: false, includedMic: false, micLabel: undefined };
   }
 
   try {
@@ -307,13 +322,15 @@ async function queryOffscreenStatus(): Promise<{
       type: string;
       isRecording?: boolean;
       includedMic?: boolean;
+      micLabel?: string;
     }>({ type: "OFFSCREEN_STATUS" });
     return {
       isRecording: response.isRecording ?? false,
       includedMic: response.includedMic ?? false,
+      micLabel: response.micLabel,
     };
   } catch {
-    return { isRecording: false, includedMic: false };
+    return { isRecording: false, includedMic: false, micLabel: undefined };
   }
 }
 
@@ -330,6 +347,7 @@ async function forceReleaseCapture(): Promise<void> {
     startedAt: undefined,
     meetingTitle: undefined,
     includedMic: undefined,
+    micLabel: undefined,
     lastError: undefined,
   });
 }
@@ -349,6 +367,7 @@ function getTabStreamId(tabId: number): Promise<string> {
 async function sendToOffscreen<T>(message: {
   type: string;
   streamId?: string;
+  micDeviceId?: string;
 }): Promise<T> {
   const payload = { ...message, target: OFFSCREEN_TARGET };
 
