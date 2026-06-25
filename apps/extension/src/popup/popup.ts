@@ -12,6 +12,7 @@ import { downloadPendingAudio } from "../lib/pending-audio-store.js";
 import { isRecordableTabUrl } from "../lib/recordable-tab.js";
 
 const startBtn = document.getElementById("start-btn") as HTMLButtonElement;
+const stopOnlyBtn = document.getElementById("stop-only-btn") as HTMLButtonElement;
 const stopBtn = document.getElementById("stop-btn") as HTMLButtonElement;
 const statusText = document.getElementById("status-text") as HTMLParagraphElement;
 const recordingIndicator = document.getElementById("recording-indicator") as HTMLDivElement;
@@ -44,7 +45,8 @@ async function init(): Promise<void> {
   });
 
   startBtn.addEventListener("click", () => void startRecording());
-  stopBtn.addEventListener("click", () => void stopRecording());
+  stopOnlyBtn.addEventListener("click", () => void stopRecording(false));
+  stopBtn.addEventListener("click", () => void stopRecording(true));
 
   const status = await chrome.runtime.sendMessage({ type: "GET_STATUS" });
   if (status?.isRecording && status.startedAt) {
@@ -102,12 +104,16 @@ async function startRecording(): Promise<void> {
   }
 }
 
-async function stopRecording(): Promise<void> {
+async function stopRecording(transcribe: boolean): Promise<void> {
+  stopOnlyBtn.disabled = true;
   stopBtn.disabled = true;
-  setStatus("Stopping recording…");
+  setStatus(transcribe ? "Stopping & transcribing…" : "Stopping recording…");
 
   try {
-    const response = await chrome.runtime.sendMessage({ type: "STOP_RECORDING" });
+    const response = await chrome.runtime.sendMessage({
+      type: "STOP_RECORDING",
+      transcribe,
+    });
     if (!response) {
       throw new Error("No response from background worker — try reloading the extension");
     }
@@ -117,6 +123,11 @@ async function stopRecording(): Promise<void> {
 
     exitRecordingUi();
     await renderHistory();
+
+    if (response.savedLocally) {
+      setStatus("Recording saved — transcribe when ready from Recent transcripts");
+      return;
+    }
 
     if (response.uploadFailed) {
       setStatus(
@@ -140,6 +151,7 @@ async function stopRecording(): Promise<void> {
     setStatus(err instanceof Error ? err.message : String(err), true);
   } finally {
     startBtn.disabled = false;
+    stopOnlyBtn.disabled = false;
     stopBtn.disabled = false;
   }
 }
@@ -147,7 +159,9 @@ async function stopRecording(): Promise<void> {
 function enterRecordingUi(startedAt: number): void {
   recordingStartedAt = startedAt;
   startBtn.classList.add("hidden");
+  stopOnlyBtn.classList.remove("hidden");
   stopBtn.classList.remove("hidden");
+  stopOnlyBtn.disabled = false;
   stopBtn.disabled = false;
   recordingIndicator.classList.remove("hidden");
   if (timerInterval) {
@@ -159,6 +173,7 @@ function enterRecordingUi(startedAt: number): void {
 
 function exitRecordingUi(): void {
   startBtn.classList.remove("hidden");
+  stopOnlyBtn.classList.add("hidden");
   stopBtn.classList.add("hidden");
   recordingIndicator.classList.add("hidden");
   if (timerInterval) {
@@ -255,6 +270,43 @@ async function retryTranscription(id: string): Promise<void> {
   }
 }
 
+function appendLocalAudioActions(
+  li: HTMLLIElement,
+  item: { localAudioId?: string; meetingTitle?: string },
+  uploadLabel = "Retry upload",
+): void {
+  if (!item.localAudioId) {
+    return;
+  }
+
+  const links = document.createElement("div");
+  links.className = "history-links";
+
+  const upload = document.createElement("button");
+  upload.type = "button";
+  upload.className = "link-btn";
+  upload.textContent = uploadLabel;
+  upload.addEventListener("click", () => {
+    void retryUpload(item.localAudioId!);
+  });
+  links.appendChild(upload);
+
+  const download = document.createElement("button");
+  download.type = "button";
+  download.className = "link-btn";
+  download.textContent = "Download audio";
+  download.addEventListener("click", () => {
+    void downloadPendingAudio(
+      item.localAudioId!,
+      `${item.meetingTitle ?? "recording"}.webm`,
+    ).catch((err) =>
+      setStatus(err instanceof Error ? err.message : String(err), true),
+    );
+  });
+  links.appendChild(download);
+  li.appendChild(links);
+}
+
 async function renderHistory(): Promise<void> {
   const history = await getHistory();
 
@@ -288,33 +340,11 @@ async function renderHistory(): Promise<void> {
         err.textContent = item.error;
         li.appendChild(err);
       }
+      appendLocalAudioActions(li, item);
+    }
 
-      const links = document.createElement("div");
-      links.className = "history-links";
-
-      const retry = document.createElement("button");
-      retry.type = "button";
-      retry.className = "link-btn";
-      retry.textContent = "Retry upload";
-      retry.addEventListener("click", () => {
-        void retryUpload(item.localAudioId!);
-      });
-      links.appendChild(retry);
-
-      const download = document.createElement("button");
-      download.type = "button";
-      download.className = "link-btn";
-      download.textContent = "Download audio";
-      download.addEventListener("click", () => {
-        void downloadPendingAudio(
-          item.localAudioId!,
-          `${item.meetingTitle ?? "recording"}.webm`,
-        ).catch((err) =>
-          setStatus(err instanceof Error ? err.message : String(err), true),
-        );
-      });
-      links.appendChild(download);
-      li.appendChild(links);
+    if (item.status === "saved" && item.localAudioId) {
+      appendLocalAudioActions(li, item, "Transcribe");
     }
 
     if (item.status === "failed" && !item.localAudioId) {

@@ -86,6 +86,14 @@ button:hover {
   background: #1d4ed8;
 }
 
+button.secondary {
+  background: #334155;
+}
+
+button.secondary:hover {
+  background: #475569;
+}
+
 button.danger {
   background: #dc2626;
 }

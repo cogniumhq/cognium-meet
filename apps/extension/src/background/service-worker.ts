@@ -44,6 +44,7 @@ interface FinalizeResult {
   recordingId?: string;
   localAudioId?: string;
   uploadFailed?: boolean;
+  savedLocally?: boolean;
   error?: string;
   durationMs: number;
   meetingTitle?: string;
@@ -63,7 +64,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 async function handleMessage(
-  message: { type: string; tabId?: number; meetingTitle?: string },
+  message: {
+    type: string;
+    tabId?: number;
+    meetingTitle?: string;
+    transcribe?: boolean;
+    localAudioId?: string;
+  },
   sendResponse: (response: unknown) => void,
 ): Promise<void> {
   try {
@@ -79,7 +86,8 @@ async function handleMessage(
     }
 
     if (message.type === "STOP_RECORDING") {
-      await handleStopRecording(sendResponse);
+      const transcribe = message.transcribe !== false;
+      await handleStopRecording(sendResponse, transcribe);
       return;
     }
 
@@ -216,8 +224,9 @@ async function handleStartRecording(
 
 async function handleStopRecording(
   sendResponse: (response: unknown) => void,
+  transcribe = true,
 ): Promise<void> {
-  const result = await stopRecordingAndFinalize();
+  const result = await stopRecordingAndFinalize({ transcribe });
   if (!result) {
     sendResponse({ type: "RECORDING_ERROR", error: "Not recording" });
     return;
@@ -225,6 +234,18 @@ async function handleStopRecording(
 
   if (result.error && !result.localAudioId) {
     sendResponse({ type: "RECORDING_ERROR", error: result.error });
+    return;
+  }
+
+  if (result.savedLocally) {
+    sendResponse({
+      type: "RECORDING_STOPPED",
+      savedLocally: true,
+      localAudioId: result.localAudioId,
+      durationMs: result.durationMs,
+      meetingTitle: result.meetingTitle,
+      startedAt: result.startedAt,
+    });
     return;
   }
 
@@ -252,6 +273,7 @@ async function handleStopRecording(
 
 async function stopRecordingAndFinalize(opts?: {
   reason?: "tab_closed" | "capture_ended";
+  transcribe?: boolean;
 }): Promise<FinalizeResult | null> {
   if (isFinalizingRecording) {
     return null;
@@ -329,6 +351,7 @@ async function stopRecordingAndFinalize(opts?: {
       startedAt,
       durationMs,
       autoStoppedReason: opts?.reason,
+      transcribe: opts?.transcribe !== false,
     });
   } finally {
     isFinalizingRecording = false;
@@ -343,10 +366,17 @@ async function finalizeRecordingBytes(
     startedAt: number;
     durationMs: number;
     autoStoppedReason?: "tab_closed" | "capture_ended";
+    transcribe?: boolean;
   },
 ): Promise<FinalizeResult> {
-  const { meetingTitle, startedAt, durationMs, mimeType, autoStoppedReason } =
-    params;
+  const {
+    meetingTitle,
+    startedAt,
+    durationMs,
+    mimeType,
+    autoStoppedReason,
+    transcribe = true,
+  } = params;
   const titleSuffix =
     autoStoppedReason === "tab_closed"
       ? " (tab closed)"
@@ -364,6 +394,27 @@ async function finalizeRecordingBytes(
     startedAt: new Date(startedAt).toISOString(),
     durationMs,
   });
+
+  if (!transcribe) {
+    const entry: StoredRecording = {
+      id: localAudioId,
+      meetingTitle: displayTitle,
+      startedAt: new Date(startedAt).toISOString(),
+      durationMs,
+      status: "saved",
+      createdAt: new Date().toISOString(),
+      localAudioId,
+    };
+    await addToHistory(entry);
+
+    return {
+      localAudioId,
+      savedLocally: true,
+      durationMs,
+      meetingTitle: displayTitle,
+      startedAt,
+    };
+  }
 
   try {
     const upload = await uploadRecording({
