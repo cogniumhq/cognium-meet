@@ -2,6 +2,8 @@ export type MessageType =
   | "START_RECORDING"
   | "STOP_RECORDING"
   | "GET_STATUS"
+  | "RETRY_UPLOAD"
+  | "TAB_CAPTURE_ENDED"
   | "OFFSCREEN_START"
   | "OFFSCREEN_STOP"
   | "OFFSCREEN_ABORT"

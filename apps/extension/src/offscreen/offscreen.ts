@@ -114,6 +114,19 @@ async function startRecording(streamId: string, micDeviceId?: string): Promise<v
   tabSource.connect(destination);
   tabSource.connect(audioContext.destination);
 
+  for (const track of tabStream.getAudioTracks()) {
+    track.addEventListener(
+      "ended",
+      () => {
+        if (mediaRecorder?.state === "recording") {
+          mediaRecorder.requestData();
+        }
+        void chrome.runtime.sendMessage({ type: "TAB_CAPTURE_ENDED" });
+      },
+      { once: true },
+    );
+  }
+
   if (micStream) {
     const micSource = audioContext.createMediaStreamSource(micStream);
     micSource.connect(destination);
@@ -134,7 +147,7 @@ async function startRecording(streamId: string, micDeviceId?: string): Promise<v
     }
   };
 
-  mediaRecorder.start(5000);
+  mediaRecorder.start(1000);
   isRecording = true;
 }
 

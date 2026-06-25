@@ -30,6 +30,25 @@ const OFFSCREEN_URL = chrome.runtime.getURL("src/offscreen/offscreen.html");
 export {};
 
 let recordingState: PersistedRecordingState = { isRecording: false };
+let isFinalizingRecording = false;
+
+interface OffscreenStopResponse {
+  type: string;
+  audioBase64?: string;
+  byteLength?: number;
+  mimeType?: string;
+  error?: string;
+}
+
+interface FinalizeResult {
+  recordingId?: string;
+  localAudioId?: string;
+  uploadFailed?: boolean;
+  error?: string;
+  durationMs: number;
+  meetingTitle?: string;
+  startedAt: number;
+}
 
 void loadRecordingState().then((state) => {
   recordingState = state;
@@ -69,6 +88,12 @@ async function handleMessage(
         message as { localAudioId?: string },
         sendResponse,
       );
+      return;
+    }
+
+    if (message.type === "TAB_CAPTURE_ENDED") {
+      void stopRecordingAndFinalize({ reason: "capture_ended" }).catch(() => {});
+      sendResponse({ ok: true });
       return;
     }
 
@@ -192,69 +217,150 @@ async function handleStartRecording(
 async function handleStopRecording(
   sendResponse: (response: unknown) => void,
 ): Promise<void> {
-  const status = await getReconciledStatus();
-  if (!status.isRecording) {
+  const result = await stopRecordingAndFinalize();
+  if (!result) {
     sendResponse({ type: "RECORDING_ERROR", error: "Not recording" });
     return;
   }
 
-  const response = await sendToOffscreen<{
-    type: string;
-    audioBase64?: string;
-    byteLength?: number;
-    mimeType?: string;
-    error?: string;
-  }>({ type: "OFFSCREEN_STOP" });
-
-  if (response.type === "RECORDING_ERROR" || !response.audioBase64) {
-    const error = response.error ?? "Failed to stop recording";
-    await setRecordingState({ ...recordingState, lastError: error });
-    sendResponse({ type: "RECORDING_ERROR", error });
+  if (result.error && !result.localAudioId) {
+    sendResponse({ type: "RECORDING_ERROR", error: result.error });
     return;
   }
 
-  const audioBytes = normalizeAudioBytes(response.audioBase64);
-  if (response.byteLength && audioBytes.length !== response.byteLength) {
+  if (result.uploadFailed) {
     sendResponse({
-      type: "RECORDING_ERROR",
-      error: `Audio corrupted in transfer (${audioBytes.length}/${response.byteLength} bytes)`,
+      type: "RECORDING_STOPPED",
+      uploadFailed: true,
+      localAudioId: result.localAudioId,
+      error: result.error,
+      durationMs: result.durationMs,
+      meetingTitle: result.meetingTitle,
+      startedAt: result.startedAt,
     });
     return;
   }
 
-  if (!isLikelyAudio(audioBytes)) {
-    sendResponse({
-      type: "RECORDING_ERROR",
-      error: `Invalid audio data (${audioBytes.length} bytes)`,
-    });
-    return;
-  }
-
-  const startedAt = status.startedAt ?? Date.now();
-  const durationMs = Date.now() - startedAt;
-  const meetingTitle = status.meetingTitle;
-  const tabId = status.tabId;
-
-  await setRecordingState({
-    isRecording: false,
-    tabId: undefined,
-    startedAt: undefined,
-    meetingTitle: undefined,
-    includedMic: undefined,
-    micLabel: undefined,
-    lastError: undefined,
+  sendResponse({
+    type: "RECORDING_STOPPED",
+    recordingId: result.recordingId,
+    durationMs: result.durationMs,
+    meetingTitle: result.meetingTitle,
+    startedAt: result.startedAt,
   });
+}
 
-  if (tabId) {
-    await chrome.tabs.sendMessage(tabId, { type: "HIDE_CONSENT_BANNER" }).catch(() => {});
+async function stopRecordingAndFinalize(opts?: {
+  reason?: "tab_closed" | "capture_ended";
+}): Promise<FinalizeResult | null> {
+  if (isFinalizingRecording) {
+    return null;
   }
 
-  await closeOffscreenDocument();
+  const status = await loadRecordingState();
+  if (!status.isRecording) {
+    return null;
+  }
+
+  isFinalizingRecording = true;
+  try {
+    let response: OffscreenStopResponse;
+    try {
+      response = await sendToOffscreen<OffscreenStopResponse>({
+        type: "OFFSCREEN_STOP",
+      });
+    } catch {
+      await forceReleaseCapture();
+      return null;
+    }
+
+    const startedAt = status.startedAt ?? Date.now();
+    const durationMs = Date.now() - startedAt;
+    const meetingTitle = status.meetingTitle;
+    const tabId = status.tabId;
+
+    if (response.type === "RECORDING_ERROR" || !response.audioBase64) {
+      const error =
+        response.error ??
+        (opts?.reason === "tab_closed"
+          ? "Tab closed before any audio could be saved"
+          : "Failed to stop recording");
+      await forceReleaseCapture();
+      await setRecordingState({ isRecording: false, lastError: error });
+      return { error, durationMs, meetingTitle, startedAt };
+    }
+
+    const audioBytes = normalizeAudioBytes(response.audioBase64);
+    if (response.byteLength && audioBytes.length !== response.byteLength) {
+      const error = `Audio corrupted in transfer (${audioBytes.length}/${response.byteLength} bytes)`;
+      await forceReleaseCapture();
+      await setRecordingState({ isRecording: false, lastError: error });
+      return { error, durationMs, meetingTitle, startedAt };
+    }
+
+    if (!isLikelyAudio(audioBytes)) {
+      const error = `Invalid audio data (${audioBytes.length} bytes)`;
+      await forceReleaseCapture();
+      await setRecordingState({ isRecording: false, lastError: error });
+      return { error, durationMs, meetingTitle, startedAt };
+    }
+
+    await setRecordingState({
+      isRecording: false,
+      tabId: undefined,
+      startedAt: undefined,
+      meetingTitle: undefined,
+      includedMic: undefined,
+      micLabel: undefined,
+      lastError: undefined,
+    });
+
+    if (tabId) {
+      await chrome.tabs
+        .sendMessage(tabId, { type: "HIDE_CONSENT_BANNER" })
+        .catch(() => {});
+    }
+
+    await closeOffscreenDocument();
+
+    return finalizeRecordingBytes(audioBytes, {
+      mimeType: response.mimeType ?? "audio/webm",
+      meetingTitle,
+      startedAt,
+      durationMs,
+      autoStoppedReason: opts?.reason,
+    });
+  } finally {
+    isFinalizingRecording = false;
+  }
+}
+
+async function finalizeRecordingBytes(
+  audioBytes: Uint8Array,
+  params: {
+    mimeType: string;
+    meetingTitle?: string;
+    startedAt: number;
+    durationMs: number;
+    autoStoppedReason?: "tab_closed" | "capture_ended";
+  },
+): Promise<FinalizeResult> {
+  const { meetingTitle, startedAt, durationMs, mimeType, autoStoppedReason } =
+    params;
+  const titleSuffix =
+    autoStoppedReason === "tab_closed"
+      ? " (tab closed)"
+      : autoStoppedReason === "capture_ended"
+        ? " (capture ended)"
+        : "";
+  const displayTitle = meetingTitle
+    ? `${meetingTitle}${titleSuffix}`
+    : `Recording${titleSuffix}`;
 
   const localAudioId = crypto.randomUUID();
   await savePendingAudio(localAudioId, audioBytes, {
-    mimeType: response.mimeType ?? "audio/webm",
-    meetingTitle,
+    mimeType,
+    meetingTitle: displayTitle,
     startedAt: new Date(startedAt).toISOString(),
     durationMs,
   });
@@ -262,8 +368,8 @@ async function handleStopRecording(
   try {
     const upload = await uploadRecording({
       bytes: audioBytes,
-      mimeType: response.mimeType ?? "audio/webm",
-      meetingTitle,
+      mimeType,
+      meetingTitle: displayTitle,
       startedAt,
       durationMs,
     });
@@ -272,7 +378,7 @@ async function handleStopRecording(
 
     const entry: StoredRecording = {
       id: upload.id,
-      meetingTitle,
+      meetingTitle: displayTitle,
       startedAt: new Date(startedAt).toISOString(),
       durationMs,
       status: "processing",
@@ -281,18 +387,17 @@ async function handleStopRecording(
     await addToHistory(entry);
     void trackTranscription(upload.id);
 
-    sendResponse({
-      type: "RECORDING_STOPPED",
+    return {
       recordingId: upload.id,
       durationMs,
-      meetingTitle,
+      meetingTitle: displayTitle,
       startedAt,
-    });
+    };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     const entry: StoredRecording = {
       id: localAudioId,
-      meetingTitle,
+      meetingTitle: displayTitle,
       startedAt: new Date(startedAt).toISOString(),
       durationMs,
       status: "upload_failed",
@@ -302,15 +407,14 @@ async function handleStopRecording(
     };
     await addToHistory(entry);
 
-    sendResponse({
-      type: "RECORDING_STOPPED",
-      uploadFailed: true,
+    return {
       localAudioId,
+      uploadFailed: true,
       error,
       durationMs,
-      meetingTitle,
+      meetingTitle: displayTitle,
       startedAt,
-    });
+    };
   }
 }
 
@@ -416,10 +520,7 @@ async function queryOffscreenStatus(): Promise<{
   includedMic: boolean;
   micLabel?: string;
 }> {
-  const contexts = await chrome.runtime.getContexts({
-    contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
-  });
-  if (contexts.length === 0) {
+  if (!(await isOffscreenDocumentOpen())) {
     return { isRecording: false, includedMic: false, micLabel: undefined };
   }
 
@@ -492,11 +593,19 @@ async function sendToOffscreen<T>(message: {
   throw new Error("Offscreen recorder not ready");
 }
 
-async function ensureOffscreenDocument(): Promise<void> {
+async function isOffscreenDocumentOpen(): Promise<boolean> {
+  if (typeof chrome.offscreen.hasDocument === "function") {
+    return chrome.offscreen.hasDocument();
+  }
+
   const existing = await chrome.runtime.getContexts({
     contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
   });
-  if (existing.length > 0) {
+  return existing.length > 0;
+}
+
+async function ensureOffscreenDocument(): Promise<void> {
+  if (await isOffscreenDocumentOpen()) {
     return;
   }
 
@@ -510,11 +619,13 @@ async function ensureOffscreenDocument(): Promise<void> {
 }
 
 async function closeOffscreenDocument(): Promise<void> {
-  const existing = await chrome.runtime.getContexts({
-    contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT],
-  });
-  if (existing.length > 0) {
+  try {
+    if (!(await isOffscreenDocumentOpen())) {
+      return;
+    }
     await chrome.offscreen.closeDocument();
+  } catch {
+    // Another stop path or extension reload may have already closed the document.
   }
 }
 
@@ -542,10 +653,6 @@ async function trackTranscription(id: string): Promise<void> {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (recordingState.isRecording && recordingState.tabId === tabId) {
-    void forceReleaseCapture();
-    void setRecordingState({
-      isRecording: false,
-      lastError: "Recorded tab was closed",
-    });
+    void stopRecordingAndFinalize({ reason: "tab_closed" }).catch(() => {});
   }
 });
