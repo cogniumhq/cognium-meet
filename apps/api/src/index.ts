@@ -23,11 +23,17 @@ const transcription = new OpenAIWhisperProvider(openaiKey);
 const deleteAudioAfterTranscription =
   process.env.DELETE_AUDIO_AFTER_TRANSCRIPTION !== "false";
 
+const maxUploadBytes = Number.parseInt(
+  process.env.MAX_UPLOAD_BYTES ?? String(150 * 1024 * 1024),
+  10,
+);
+
 const deps = {
   store,
   transcription,
   apiToken,
   deleteAudioAfterTranscription,
+  maxUploadBytes,
 };
 
 const app = createApp(deps);

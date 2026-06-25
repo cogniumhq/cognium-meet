@@ -26,6 +26,8 @@ export interface StoredRecording {
   status: string;
   error?: string;
   createdAt: string;
+  /** Local IndexedDB backup when upload has not reached the server yet */
+  localAudioId?: string;
 }
 
 const HISTORY_KEY = "recordingHistory";
@@ -46,6 +48,16 @@ export async function updateHistoryEntry(
   const next = history.map((item) =>
     item.id === id ? { ...item, ...patch } : item,
   );
+  await chrome.storage.local.set({ [HISTORY_KEY]: next });
+}
+
+export async function replaceHistoryEntry(
+  oldId: string,
+  entry: StoredRecording,
+): Promise<void> {
+  const result = await chrome.storage.local.get(HISTORY_KEY);
+  const history = (result[HISTORY_KEY] as StoredRecording[] | undefined) ?? [];
+  const next = history.map((item) => (item.id === oldId ? entry : item));
   await chrome.storage.local.set({ [HISTORY_KEY]: next });
 }
 

@@ -1,9 +1,10 @@
-import { readFile, unlink } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import OpenAI, { toFile } from "openai";
-import type { TranscriptResult } from "@cognium/meet-shared";
+import type { TranscriptResult, TranscriptSegment } from "@cognium/meet-shared";
 import type { TranscriptionProvider } from "./provider.js";
 import {
-  prepareAudioForWhisper,
+  cleanupPreparedAudio,
+  prepareAudioChunksForWhisper,
   whisperFilename,
   whisperMimeType,
 } from "./prepare-audio.js";
@@ -16,7 +17,7 @@ export class OpenAIWhisperProvider implements TranscriptionProvider {
     this.client = new OpenAI({
       apiKey,
       maxRetries: 0,
-      timeout: 5 * 60 * 1000,
+      timeout: 10 * 60 * 1000,
     });
   }
 
@@ -24,41 +25,72 @@ export class OpenAIWhisperProvider implements TranscriptionProvider {
     audioPath: string,
     opts?: { language?: string },
   ): Promise<TranscriptResult> {
-    const preparedPath = await prepareAudioForWhisper(audioPath);
-    const data = await readFile(preparedPath);
-    const file = await toFile(data, whisperFilename(preparedPath), {
-      type: whisperMimeType(preparedPath),
-    });
+    const { paths, cleanup } = await prepareAudioChunksForWhisper(audioPath);
 
     try {
-      const response = await withRetries(
-        () =>
-          this.client.audio.transcriptions.create({
-            file,
-            model: "whisper-1",
-            response_format: "verbose_json",
-            timestamp_granularities: ["segment"],
-            ...(opts?.language ? { language: opts.language } : {}),
-          }),
-        { attempts: 4, baseDelayMs: 2000 },
-      );
+      const segments: TranscriptSegment[] = [];
+      let language: string | undefined;
+      let duration = 0;
+      let offset = 0;
 
-      const segments = (response.segments ?? []).map((seg) => ({
-        start: seg.start,
-        end: seg.end,
-        text: seg.text.trim(),
-      }));
+      for (const chunkPath of paths) {
+        const chunk = await this.transcribeChunk(chunkPath, opts);
+        language ??= chunk.language;
+        for (const seg of chunk.segments) {
+          segments.push({
+            start: seg.start + offset,
+            end: seg.end + offset,
+            text: seg.text,
+          });
+        }
+        const chunkDuration = chunk.duration ?? 0;
+        offset += chunkDuration;
+        duration += chunkDuration;
+      }
 
       return {
         recordingId: "",
-        language: response.language,
-        duration: response.duration,
+        language,
+        duration: duration || undefined,
         segments,
       };
     } finally {
-      if (preparedPath !== audioPath) {
-        await unlink(preparedPath).catch(() => {});
-      }
+      await cleanupPreparedAudio(cleanup);
     }
+  }
+
+  private async transcribeChunk(
+    audioPath: string,
+    opts?: { language?: string },
+  ): Promise<TranscriptResult> {
+    const data = await readFile(audioPath);
+    const file = await toFile(data, whisperFilename(audioPath), {
+      type: whisperMimeType(audioPath),
+    });
+
+    const response = await withRetries(
+      () =>
+        this.client.audio.transcriptions.create({
+          file,
+          model: "whisper-1",
+          response_format: "verbose_json",
+          timestamp_granularities: ["segment"],
+          ...(opts?.language ? { language: opts.language } : {}),
+        }),
+      { attempts: 4, baseDelayMs: 2000 },
+    );
+
+    const segments = (response.segments ?? []).map((seg) => ({
+      start: seg.start,
+      end: seg.end,
+      text: seg.text.trim(),
+    }));
+
+    return {
+      recordingId: "",
+      language: response.language,
+      duration: response.duration,
+      segments,
+    };
   }
 }

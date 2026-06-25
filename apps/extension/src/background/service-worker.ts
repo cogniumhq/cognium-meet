@@ -13,10 +13,17 @@ import {
 import {
   addToHistory,
   getSettings,
+  replaceHistoryEntry,
   updateHistoryEntry,
   type StoredRecording,
 } from "../lib/storage.js";
 import { pollRecording, uploadRecording } from "../lib/upload.js";
+import {
+  deletePendingAudio,
+  loadPendingAudio,
+  savePendingAudio,
+} from "../lib/pending-audio-store.js";
+import { isRecordableTabUrl, tabRecordingTitle } from "../lib/recordable-tab.js";
 
 const OFFSCREEN_URL = chrome.runtime.getURL("src/offscreen/offscreen.html");
 
@@ -57,6 +64,14 @@ async function handleMessage(
       return;
     }
 
+    if (message.type === "RETRY_UPLOAD") {
+      await handleRetryUpload(
+        message as { localAudioId?: string },
+        sendResponse,
+      );
+      return;
+    }
+
     sendResponse({ type: "RECORDING_ERROR", error: "Unknown message" });
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
@@ -89,19 +104,22 @@ async function handleStartRecording(
     }
     sendResponse({
       type: "RECORDING_ERROR",
-      error: "Already recording another meeting tab",
+      error: "Already recording another tab",
     });
     return;
   }
 
   const tab = await chrome.tabs.get(tabId);
-  if (!tab.url?.startsWith("https://meet.google.com/")) {
+  if (!isRecordableTabUrl(tab.url)) {
     sendResponse({
       type: "RECORDING_ERROR",
-      error: "Open a Google Meet tab before recording",
+      error:
+        "This page cannot be recorded — open a regular website tab (http/https) and try again",
     });
     return;
   }
+
+  const recordingTitle = tabRecordingTitle(tab);
 
   let streamId: string;
   try {
@@ -151,7 +169,7 @@ async function handleStartRecording(
       isRecording: true,
       tabId,
       startedAt,
-      meetingTitle: message.meetingTitle ?? tab.title ?? "Google Meet",
+      meetingTitle: message.meetingTitle ?? recordingTitle,
       includedMic: startResult.includedMic ?? false,
       micLabel: startResult.micLabel,
       lastError: undefined,
@@ -233,32 +251,120 @@ async function handleStopRecording(
 
   await closeOffscreenDocument();
 
-  const upload = await uploadRecording({
-    bytes: audioBytes,
+  const localAudioId = crypto.randomUUID();
+  await savePendingAudio(localAudioId, audioBytes, {
     mimeType: response.mimeType ?? "audio/webm",
-    meetingTitle,
-    startedAt,
-    durationMs,
-  });
-
-  const entry: StoredRecording = {
-    id: upload.id,
     meetingTitle,
     startedAt: new Date(startedAt).toISOString(),
     durationMs,
-    status: "processing",
-    createdAt: new Date().toISOString(),
-  };
-  await addToHistory(entry);
-  void trackTranscription(upload.id);
-
-  sendResponse({
-    type: "RECORDING_STOPPED",
-    recordingId: upload.id,
-    durationMs,
-    meetingTitle,
-    startedAt,
   });
+
+  try {
+    const upload = await uploadRecording({
+      bytes: audioBytes,
+      mimeType: response.mimeType ?? "audio/webm",
+      meetingTitle,
+      startedAt,
+      durationMs,
+    });
+
+    await deletePendingAudio(localAudioId);
+
+    const entry: StoredRecording = {
+      id: upload.id,
+      meetingTitle,
+      startedAt: new Date(startedAt).toISOString(),
+      durationMs,
+      status: "processing",
+      createdAt: new Date().toISOString(),
+    };
+    await addToHistory(entry);
+    void trackTranscription(upload.id);
+
+    sendResponse({
+      type: "RECORDING_STOPPED",
+      recordingId: upload.id,
+      durationMs,
+      meetingTitle,
+      startedAt,
+    });
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    const entry: StoredRecording = {
+      id: localAudioId,
+      meetingTitle,
+      startedAt: new Date(startedAt).toISOString(),
+      durationMs,
+      status: "upload_failed",
+      error,
+      createdAt: new Date().toISOString(),
+      localAudioId,
+    };
+    await addToHistory(entry);
+
+    sendResponse({
+      type: "RECORDING_STOPPED",
+      uploadFailed: true,
+      localAudioId,
+      error,
+      durationMs,
+      meetingTitle,
+      startedAt,
+    });
+  }
+}
+
+async function handleRetryUpload(
+  message: { localAudioId?: string },
+  sendResponse: (response: unknown) => void,
+): Promise<void> {
+  const localAudioId = message.localAudioId;
+  if (!localAudioId) {
+    sendResponse({ type: "RECORDING_ERROR", error: "Missing local recording id" });
+    return;
+  }
+
+  const pending = await loadPendingAudio(localAudioId);
+  if (!pending) {
+    sendResponse({
+      type: "RECORDING_ERROR",
+      error: "Local recording not found — it may have been cleared after a successful upload",
+    });
+    return;
+  }
+
+  try {
+    const upload = await uploadRecording({
+      bytes: pending.bytes,
+      mimeType: pending.meta.mimeType,
+      meetingTitle: pending.meta.meetingTitle,
+      startedAt: new Date(pending.meta.startedAt).getTime(),
+      durationMs: pending.meta.durationMs,
+    });
+
+    await deletePendingAudio(localAudioId);
+
+    const entry: StoredRecording = {
+      id: upload.id,
+      meetingTitle: pending.meta.meetingTitle,
+      startedAt: pending.meta.startedAt,
+      durationMs: pending.meta.durationMs,
+      status: "processing",
+      createdAt: new Date().toISOString(),
+    };
+    await replaceHistoryEntry(localAudioId, entry);
+    void trackTranscription(upload.id);
+
+    sendResponse({
+      type: "RECORDING_STOPPED",
+      recordingId: upload.id,
+      uploadFailed: false,
+    });
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    await updateHistoryEntry(localAudioId, { status: "upload_failed", error });
+    sendResponse({ type: "RECORDING_ERROR", error });
+  }
 }
 
 async function getReconciledStatus(): Promise<RecordingState> {
@@ -397,7 +503,7 @@ async function ensureOffscreenDocument(): Promise<void> {
   await chrome.offscreen.createDocument({
     url: OFFSCREEN_URL,
     reasons: [chrome.offscreen.Reason.USER_MEDIA],
-    justification: "Record Google Meet tab audio for transcription",
+    justification: "Record tab audio for transcription",
   });
 
   await sleep(200);
@@ -439,7 +545,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     void forceReleaseCapture();
     void setRecordingState({
       isRecording: false,
-      lastError: "Meeting tab was closed",
+      lastError: "Recorded tab was closed",
     });
   }
 });

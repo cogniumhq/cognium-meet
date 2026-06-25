@@ -8,6 +8,8 @@ import {
   pollRecording,
   retryRecording,
 } from "../lib/upload.js";
+import { downloadPendingAudio } from "../lib/pending-audio-store.js";
+import { isRecordableTabUrl } from "../lib/recordable-tab.js";
 
 const startBtn = document.getElementById("start-btn") as HTMLButtonElement;
 const stopBtn = document.getElementById("stop-btn") as HTMLButtonElement;
@@ -64,6 +66,11 @@ async function startRecording(): Promise<void> {
     if (!tab?.id) {
       throw new Error("No active tab found");
     }
+    if (!isRecordableTabUrl(tab.url)) {
+      throw new Error(
+        "This page cannot be recorded — open a regular website tab (http/https)",
+      );
+    }
 
     const response = await chrome.runtime.sendMessage({
       type: "START_RECORDING",
@@ -109,13 +116,23 @@ async function stopRecording(): Promise<void> {
     }
 
     exitRecordingUi();
+    await renderHistory();
+
+    if (response.uploadFailed) {
+      setStatus(
+        response.error
+          ? `Upload failed — saved locally. ${response.error}`
+          : "Upload failed — recording saved locally",
+        true,
+      );
+      return;
+    }
 
     if (!response.recordingId) {
       throw new Error("Upload did not return a recording id");
     }
 
     setStatus("Transcribing… — safe to close this popup");
-    await renderHistory();
 
     void waitForTranscription(response.recordingId);
   } catch (err) {
@@ -171,6 +188,9 @@ async function refreshStaleHistory(): Promise<void> {
     if (item.status !== "processing" && item.status !== "failed") {
       continue;
     }
+    if (item.localAudioId) {
+      continue;
+    }
     try {
       const meta = await fetchRecordingStatus(item.id);
       if (meta.status !== item.status || meta.error !== item.error) {
@@ -202,6 +222,27 @@ async function waitForTranscription(id: string): Promise<void> {
   }
 }
 
+async function retryUpload(localAudioId: string): Promise<void> {
+  setStatus("Retrying upload…");
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "RETRY_UPLOAD",
+      localAudioId,
+    });
+    if (response?.type === "RECORDING_ERROR") {
+      throw new Error(response.error);
+    }
+    await renderHistory();
+    if (response?.recordingId) {
+      setStatus("Transcribing…");
+      await waitForTranscription(response.recordingId);
+    }
+  } catch (err) {
+    setStatus(err instanceof Error ? err.message : String(err), true);
+    await renderHistory();
+  }
+}
+
 async function retryTranscription(id: string): Promise<void> {
   setStatus("Retrying transcription…");
   try {
@@ -230,7 +271,7 @@ async function renderHistory(): Promise<void> {
 
     const title = document.createElement("div");
     title.className = "history-title";
-    title.textContent = item.meetingTitle ?? "Google Meet";
+    title.textContent = item.meetingTitle ?? "Recording";
 
     const meta = document.createElement("div");
     meta.className = "history-meta";
@@ -240,7 +281,43 @@ async function renderHistory(): Promise<void> {
     li.appendChild(title);
     li.appendChild(meta);
 
-    if (item.status === "failed") {
+    if (item.status === "upload_failed" && item.localAudioId) {
+      if (item.error) {
+        const err = document.createElement("div");
+        err.className = "history-error";
+        err.textContent = item.error;
+        li.appendChild(err);
+      }
+
+      const links = document.createElement("div");
+      links.className = "history-links";
+
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "link-btn";
+      retry.textContent = "Retry upload";
+      retry.addEventListener("click", () => {
+        void retryUpload(item.localAudioId!);
+      });
+      links.appendChild(retry);
+
+      const download = document.createElement("button");
+      download.type = "button";
+      download.className = "link-btn";
+      download.textContent = "Download audio";
+      download.addEventListener("click", () => {
+        void downloadPendingAudio(
+          item.localAudioId!,
+          `${item.meetingTitle ?? "recording"}.webm`,
+        ).catch((err) =>
+          setStatus(err instanceof Error ? err.message : String(err), true),
+        );
+      });
+      links.appendChild(download);
+      li.appendChild(links);
+    }
+
+    if (item.status === "failed" && !item.localAudioId) {
       if (item.error) {
         const err = document.createElement("div");
         err.className = "history-error";

@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Cognium Meet",
-  "description": "Record Google Meet audio and transcribe to text files",
+  "description": "Record browser tab audio and transcribe to text files",
   "version": "0.1.0",
   "permissions": ["tabCapture", "offscreen", "storage", "activeTab", "tabs"],
-  "host_permissions": ["https://meet.google.com/*", "http://localhost:3847/*", "http://127.0.0.1:3847/*"],
+  "host_permissions": ["http://localhost:3847/*", "http://127.0.0.1:3847/*"],
   "action": {
     "default_popup": "src/popup/popup.html",
     "default_title": "Cognium Meet"
@@ -16,7 +16,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://meet.google.com/*"],
+      "matches": ["<all_urls>"],
       "js": ["src/content/consent-banner.ts"],
       "run_at": "document_idle"
     }

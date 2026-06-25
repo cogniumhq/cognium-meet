@@ -17,7 +17,7 @@ function showBanner(): void {
   const banner = document.createElement("div");
   banner.id = BANNER_ID;
   banner.setAttribute("role", "status");
-  banner.textContent = "This meeting is being recorded for transcription.";
+  banner.textContent = "This tab is being recorded for transcription.";
   Object.assign(banner.style, {
     position: "fixed",
     top: "12px",

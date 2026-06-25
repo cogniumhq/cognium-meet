@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { bodyLimit } from "hono/body-limit";
 import { v4 as uuidv4 } from "uuid";
 import type { RecordingMeta } from "@cognium/meet-shared";
 import type { TranscriptionProvider } from "./transcription/provider.js";
@@ -16,6 +17,7 @@ import {
 interface AppDeps extends ProcessingDeps {
   transcription: TranscriptionProvider;
   apiToken?: string;
+  maxUploadBytes?: number;
 }
 
 export function createApp(deps: AppDeps) {
@@ -48,8 +50,23 @@ export function createApp(deps: AppDeps) {
 
   app.get("/health", (c) => c.json({ ok: true }));
 
-  app.post("/v1/recordings", async (c) => {
-    const contentType = c.req.header("content-type") ?? "";
+  const maxUploadBytes = deps.maxUploadBytes ?? 150 * 1024 * 1024;
+
+  app.post(
+    "/v1/recordings",
+    bodyLimit({
+      maxSize: maxUploadBytes,
+      onError: (c) =>
+        c.json(
+          {
+            error: "Payload too large",
+            detail: `Maximum upload size is ${maxUploadBytes} bytes`,
+          },
+          413,
+        ),
+    }),
+    async (c) => {
+      const contentType = c.req.header("content-type") ?? "";
     let buffer: Buffer;
     let meetingTitle: string | undefined;
     let startedAt: string;
@@ -127,7 +144,8 @@ export function createApp(deps: AppDeps) {
     enqueueTranscription(deps, id);
 
     return c.json({ id, status: meta.status }, 202);
-  });
+    },
+  );
 
   app.post("/v1/recordings/:id/retry", async (c) => {
     const id = c.req.param("id");

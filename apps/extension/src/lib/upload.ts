@@ -1,9 +1,5 @@
 import type { RecordingMeta } from "@cognium/meet-shared";
-import {
-  bytesToBase64,
-  isLikelyAudio,
-  normalizeAudioBytes,
-} from "./audio-bytes.js";
+import { isLikelyAudio } from "./audio-bytes.js";
 import { getSettings } from "./storage.js";
 
 export interface UploadResult {
@@ -25,28 +21,32 @@ export async function uploadRecording(params: {
   }
 
   const settings = await getSettings();
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
+  const headers: Record<string, string> = {};
   if (settings.apiToken) {
     headers.Authorization = `Bearer ${settings.apiToken}`;
   }
 
+  const form = new FormData();
+  form.append(
+    "audio",
+    new Blob([params.bytes], { type: params.mimeType ?? "audio/webm" }),
+    "recording.webm",
+  );
+  if (params.meetingTitle) {
+    form.append("meetingTitle", params.meetingTitle);
+  }
+  form.append("startedAt", new Date(params.startedAt).toISOString());
+  form.append("durationMs", String(params.durationMs));
+
   const response = await fetch(`${settings.apiUrl}/v1/recordings`, {
     method: "POST",
     headers,
-    body: JSON.stringify({
-      audioBase64: bytesToBase64(params.bytes),
-      mimeType: params.mimeType ?? "audio/webm",
-      meetingTitle: params.meetingTitle,
-      startedAt: new Date(params.startedAt).toISOString(),
-      durationMs: params.durationMs,
-    }),
+    body: form,
   });
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`Upload failed (${response.status}): ${text}`);
+    throw new Error(`${response.status} ${text}`);
   }
 
   return (await response.json()) as UploadResult;
