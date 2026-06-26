@@ -179,6 +179,10 @@ button:disabled {
   text-decoration: underline;
 }
 
+.history-links .danger-link {
+  color: #f87171;
+}
+
 .error {
   color: #fca5a5;
 }

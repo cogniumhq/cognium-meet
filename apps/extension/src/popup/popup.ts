@@ -1,5 +1,6 @@
 import {
   getHistory,
+  removeHistoryEntry,
   updateHistoryEntry,
 } from "../lib/storage.js";
 import {
@@ -8,7 +9,7 @@ import {
   pollRecording,
   retryRecording,
 } from "../lib/upload.js";
-import { downloadPendingAudio } from "../lib/pending-audio-store.js";
+import { deletePendingAudio, downloadPendingAudio } from "../lib/pending-audio-store.js";
 import { isRecordableTabUrl } from "../lib/recordable-tab.js";
 
 const startBtn = document.getElementById("start-btn") as HTMLButtonElement;
@@ -270,9 +271,53 @@ async function retryTranscription(id: string): Promise<void> {
   }
 }
 
+async function deleteLocalRecording(item: {
+  id: string;
+  localAudioId?: string;
+  meetingTitle?: string;
+}): Promise<void> {
+  const label = item.meetingTitle ?? "this recording";
+  if (
+    !confirm(
+      `Delete "${label}" from this device?\n\nLocal audio will be removed from browser storage. This cannot be undone.`,
+    )
+  ) {
+    return;
+  }
+
+  const localId = item.localAudioId ?? item.id;
+  try {
+    await deletePendingAudio(localId);
+  } catch {
+    // Entry may already be cleared after a successful upload.
+  }
+  await removeHistoryEntry(item.id);
+  await renderHistory();
+  setStatus("Local recording deleted");
+}
+
+async function removeFromHistory(item: {
+  id: string;
+  meetingTitle?: string;
+  status: string;
+}): Promise<void> {
+  const label = item.meetingTitle ?? "this item";
+  const serverNote =
+    item.status === "completed" || item.status === "failed"
+      ? " Transcripts on the server are not deleted."
+      : "";
+  if (!confirm(`Remove "${label}" from Recent transcripts?${serverNote}`)) {
+    return;
+  }
+
+  await removeHistoryEntry(item.id);
+  await renderHistory();
+  setStatus("Removed from list");
+}
+
 function appendLocalAudioActions(
   li: HTMLLIElement,
-  item: { localAudioId?: string; meetingTitle?: string },
+  item: { id: string; localAudioId?: string; meetingTitle?: string },
   uploadLabel = "Retry upload",
 ): void {
   if (!item.localAudioId) {
@@ -304,6 +349,34 @@ function appendLocalAudioActions(
     );
   });
   links.appendChild(download);
+
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "link-btn danger-link";
+  del.textContent = "Delete local";
+  del.addEventListener("click", () => {
+    void deleteLocalRecording(item);
+  });
+  links.appendChild(del);
+
+  li.appendChild(links);
+}
+
+function appendRemoveAction(
+  li: HTMLLIElement,
+  item: { id: string; meetingTitle?: string; status: string },
+): void {
+  const links = document.createElement("div");
+  links.className = "history-links";
+
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "link-btn danger-link";
+  remove.textContent = "Remove";
+  remove.addEventListener("click", () => {
+    void removeFromHistory(item);
+  });
+  links.appendChild(remove);
   li.appendChild(links);
 }
 
@@ -367,6 +440,7 @@ async function renderHistory(): Promise<void> {
       });
       links.appendChild(retry);
       li.appendChild(links);
+      appendRemoveAction(li, item);
     }
 
     if (item.status === "completed") {
@@ -396,6 +470,11 @@ async function renderHistory(): Promise<void> {
       links.appendChild(txt);
       links.appendChild(json);
       li.appendChild(links);
+      appendRemoveAction(li, item);
+    }
+
+    if (item.status === "processing") {
+      appendRemoveAction(li, item);
     }
 
     historyList.appendChild(li);

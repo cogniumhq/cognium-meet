@@ -65,3 +65,11 @@ export async function getHistory(): Promise<StoredRecording[]> {
   const result = await chrome.storage.local.get(HISTORY_KEY);
   return (result[HISTORY_KEY] as StoredRecording[] | undefined) ?? [];
 }
+
+export async function removeHistoryEntry(id: string): Promise<void> {
+  const result = await chrome.storage.local.get(HISTORY_KEY);
+  const history = (result[HISTORY_KEY] as StoredRecording[] | undefined) ?? [];
+  await chrome.storage.local.set({
+    [HISTORY_KEY]: history.filter((item) => item.id !== id),
+  });
+}
