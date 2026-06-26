@@ -238,7 +238,6 @@ async function handleStartRecording(
       lastError: undefined,
     });
 
-    await chrome.tabs.sendMessage(tabId, { type: "SHOW_CONSENT_BANNER" }).catch(() => {});
     sendResponse({
       type: "RECORDING_STARTED",
       startedAt,
@@ -307,7 +306,6 @@ async function handleCaptureEndedWithLocalAudio(message: {
     const startedAt = stored.startedAt ?? Date.now();
     const durationMs = Date.now() - startedAt;
     const meetingTitle = stored.meetingTitle;
-    const tabId = stored.tabId;
 
     const pending = await loadPendingAudio(message.localAudioId);
     if (!pending) {
@@ -324,10 +322,6 @@ async function handleCaptureEndedWithLocalAudio(message: {
       micLabel: undefined,
       lastError: undefined,
     });
-
-    if (tabId) {
-      await chrome.tabs.sendMessage(tabId, { type: "HIDE_CONSENT_BANNER" }).catch(() => {});
-    }
 
     await closeOffscreenDocument();
 
@@ -422,7 +416,6 @@ async function stopRecordingAndFinalize(opts?: {
     const startedAt = opts?.startedAt ?? status.startedAt ?? Date.now();
     const durationMs = Date.now() - startedAt;
     const meetingTitle = opts?.meetingTitle ?? status.meetingTitle;
-    const tabId = opts?.tabId ?? status.tabId;
 
     let response: OffscreenStopResponse;
     if (opts?.capturedAudio) {
@@ -490,12 +483,6 @@ async function stopRecordingAndFinalize(opts?: {
       micLabel: undefined,
       lastError: undefined,
     });
-
-    if (tabId) {
-      await chrome.tabs
-        .sendMessage(tabId, { type: "HIDE_CONSENT_BANNER" })
-        .catch(() => {});
-    }
 
     await closeOffscreenDocument();
 
