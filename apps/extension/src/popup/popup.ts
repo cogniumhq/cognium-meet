@@ -4,6 +4,7 @@ import {
   updateHistoryEntry,
 } from "../lib/storage.js";
 import {
+  deleteServerRecording,
   downloadTranscript,
   fetchRecordingStatus,
   pollRecording,
@@ -300,19 +301,35 @@ async function removeFromHistory(item: {
   id: string;
   meetingTitle?: string;
   status: string;
+  localAudioId?: string;
 }): Promise<void> {
   const label = item.meetingTitle ?? "this item";
-  const serverNote =
-    item.status === "completed" || item.status === "failed"
-      ? " Transcripts on the server are not deleted."
-      : "";
-  if (!confirm(`Remove "${label}" from Recent transcripts?${serverNote}`)) {
+  const onServer =
+    !item.localAudioId &&
+    (item.status === "completed" ||
+      item.status === "failed" ||
+      item.status === "processing");
+
+  const message = onServer
+    ? `Delete "${label}" from the server?\n\nAudio and transcripts will be permanently removed.`
+    : `Remove "${label}" from Recent transcripts?`;
+
+  if (!confirm(message)) {
     return;
+  }
+
+  if (onServer) {
+    try {
+      await deleteServerRecording(item.id);
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err), true);
+      return;
+    }
   }
 
   await removeHistoryEntry(item.id);
   await renderHistory();
-  setStatus("Removed from list");
+  setStatus(onServer ? "Recording deleted from server" : "Removed from list");
 }
 
 function appendLocalAudioActions(
@@ -364,15 +381,21 @@ function appendLocalAudioActions(
 
 function appendRemoveAction(
   li: HTMLLIElement,
-  item: { id: string; meetingTitle?: string; status: string },
+  item: { id: string; meetingTitle?: string; status: string; localAudioId?: string },
 ): void {
   const links = document.createElement("div");
   links.className = "history-links";
 
+  const onServer =
+    !item.localAudioId &&
+    (item.status === "completed" ||
+      item.status === "failed" ||
+      item.status === "processing");
+
   const remove = document.createElement("button");
   remove.type = "button";
   remove.className = "link-btn danger-link";
-  remove.textContent = "Remove";
+  remove.textContent = onServer ? "Delete" : "Remove";
   remove.addEventListener("click", () => {
     void removeFromHistory(item);
   });

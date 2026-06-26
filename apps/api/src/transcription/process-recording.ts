@@ -11,6 +11,10 @@ export interface ProcessingDeps {
 const PROCESSING_STALE_MS = 20 * 60 * 1000;
 const activeJobs = new Set<string>();
 
+export function cancelTranscription(id: string): void {
+  activeJobs.delete(id);
+}
+
 export async function processRecording(
   deps: ProcessingDeps,
   id: string,
@@ -31,7 +35,15 @@ export async function processRecording(
     processingStartedAt: new Date().toISOString(),
   });
 
+  console.log(`[transcription] started id=${id} title=${meta.meetingTitle ?? "(none)"}`);
+
   const result = await deps.transcription.transcribe(deps.store.audioPath(id));
+
+  const stillExists = await deps.store.getMeta(id);
+  if (!stillExists) {
+    return;
+  }
+
   await deps.store.saveTranscript(id, result);
 
   const completed: RecordingMeta = {
@@ -42,6 +54,10 @@ export async function processRecording(
     processingStartedAt: undefined,
   };
   await deps.store.saveMeta(completed);
+
+  console.log(
+    `[transcription] completed id=${id} segments=${result.segments.length} language=${result.language ?? "?"}`,
+  );
 
   if (deps.deleteAudioAfterTranscription) {
     await deps.store.deleteAudio(id);
@@ -63,6 +79,7 @@ export async function markRecordingFailed(
     error,
     processingStartedAt: undefined,
   });
+  console.log(`[transcription] failed id=${id} error=${error}`);
 }
 
 export function enqueueTranscription(deps: ProcessingDeps, id: string): void {

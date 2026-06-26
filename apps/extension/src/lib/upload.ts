@@ -88,6 +88,26 @@ export async function retryRecording(id: string): Promise<RecordingMeta> {
   return (await response.json()) as RecordingMeta;
 }
 
+export async function deleteServerRecording(id: string): Promise<void> {
+  const settings = await getSettings();
+  const headers: Record<string, string> = {};
+  if (settings.apiToken) {
+    headers.Authorization = `Bearer ${settings.apiToken}`;
+  }
+
+  const response = await fetch(`${settings.apiUrl}/v1/recordings/${id}`, {
+    method: "DELETE",
+    headers,
+  });
+  if (response.status === 404) {
+    return;
+  }
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Delete failed (${response.status}): ${text}`);
+  }
+}
+
 export async function pollRecording(
   id: string,
   opts?: { intervalMs?: number; timeoutMs?: number },

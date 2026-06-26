@@ -11,8 +11,10 @@ import {
   isProcessingStale,
   markRecordingFailed,
   processRecording,
+  cancelTranscription,
   type ProcessingDeps,
 } from "./transcription/process-recording.js";
+import { requestLog } from "./middleware/request-log.js";
 
 interface AppDeps extends ProcessingDeps {
   transcription: TranscriptionProvider;
@@ -28,9 +30,11 @@ export function createApp(deps: AppDeps) {
     cors({
       origin: (origin) => origin ?? "*",
       allowHeaders: ["Authorization", "Content-Type"],
-      allowMethods: ["GET", "POST", "OPTIONS"],
+      allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
     }),
   );
+
+  app.use("*", requestLog());
 
   app.use("*", async (c, next) => {
     if (c.req.path === "/health") {
@@ -143,6 +147,10 @@ export function createApp(deps: AppDeps) {
 
     enqueueTranscription(deps, id);
 
+    console.log(
+      `[api] recording created id=${id} bytes=${buffer.length} title=${meetingTitle ?? "(none)"}`,
+    );
+
     return c.json({ id, status: meta.status }, 202);
     },
   );
@@ -176,6 +184,7 @@ export function createApp(deps: AppDeps) {
     });
 
     enqueueTranscription(deps, id);
+    console.log(`[api] transcription retry id=${id}`);
     return c.json({ id, status: "processing" }, 202);
   });
 
@@ -242,6 +251,21 @@ export function createApp(deps: AppDeps) {
       return c.json({ error: "Transcript missing" }, 404);
     }
     return c.json(json);
+  });
+
+  app.delete("/v1/recordings/:id", async (c) => {
+    const id = c.req.param("id");
+    const meta = await deps.store.getMeta(id);
+    if (!meta) {
+      return c.json({ error: "Not found" }, 404);
+    }
+
+    cancelTranscription(id);
+    await deps.store.deleteRecording(id);
+    console.log(
+      `[api] recording deleted id=${id} title=${meta.meetingTitle ?? "(none)"} status=${meta.status}`,
+    );
+    return c.body(null, 204);
   });
 
   return app;
