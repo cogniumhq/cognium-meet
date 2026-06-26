@@ -1,6 +1,7 @@
 import { blobToBytes, bytesToBase64 } from "../lib/audio-bytes.js";
 import { listAudioInputDevices, micTrackLabel, openMicStream } from "../lib/audio-devices.js";
 import { isOffscreenMessage } from "../lib/messages.js";
+import { savePendingAudio } from "../lib/pending-audio-store.js";
 
 let mediaRecorder: MediaRecorder | null = null;
 let chunks: Blob[] = [];
@@ -10,6 +11,63 @@ let audioContext: AudioContext | null = null;
 let includedMic = false;
 let micLabel: string | undefined;
 let isRecording = false;
+let captureFlushPromise: Promise<void> | null = null;
+let activeStopPromise: Promise<Blob> | null = null;
+let lastStoppedBlob: Blob | null = null;
+let recordingMeta: { meetingTitle?: string; startedAt: number } | null = null;
+
+async function flushRecordingOnCaptureEnd(
+  reason: "tab_closed" | "capture_ended" = "capture_ended",
+): Promise<void> {
+  if (captureFlushPromise) {
+    return captureFlushPromise;
+  }
+  if (!isRecording && !lastStoppedBlob) {
+    return;
+  }
+
+  captureFlushPromise = doFlushRecordingOnCaptureEnd(reason);
+  try {
+    await captureFlushPromise;
+  } finally {
+    captureFlushPromise = null;
+  }
+}
+
+async function doFlushRecordingOnCaptureEnd(
+  reason: "tab_closed" | "capture_ended",
+): Promise<void> {
+  try {
+    const blob = await stopRecording();
+    const audioBytes = await blobToBytes(blob);
+    const mimeType = blob.type || "audio/webm";
+    const startedAt = recordingMeta?.startedAt ?? Date.now();
+    const durationMs = Date.now() - startedAt;
+    const meetingTitle = recordingMeta?.meetingTitle;
+
+    const localAudioId = crypto.randomUUID();
+    await savePendingAudio(localAudioId, audioBytes, {
+      mimeType,
+      meetingTitle,
+      startedAt: new Date(startedAt).toISOString(),
+      durationMs,
+    });
+
+    await chrome.runtime.sendMessage({
+      type: "CAPTURE_ENDED_WITH_LOCAL_AUDIO",
+      reason,
+      localAudioId,
+      mimeType,
+      byteLength: audioBytes.length,
+    });
+  } catch (err) {
+    await chrome.runtime.sendMessage({
+      type: "TAB_CAPTURE_ENDED",
+      reason,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
 
 export {};
 
@@ -23,7 +81,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 async function handleMessage(
-  message: { type: string; streamId?: string; micDeviceId?: string },
+  message: {
+    type: string;
+    streamId?: string;
+    micDeviceId?: string;
+    meetingTitle?: string;
+    startedAt?: number;
+    reason?: "tab_closed" | "capture_ended";
+  },
   sendResponse: (response: unknown) => void,
 ): Promise<void> {
   try {
@@ -44,8 +109,19 @@ async function handleMessage(
       return;
     }
 
+    if (message.type === "OFFSCREEN_FLUSH") {
+      void flushRecordingOnCaptureEnd(message.reason ?? "tab_closed");
+      sendResponse({ ok: true });
+      return;
+    }
+
     if (message.type === "OFFSCREEN_START") {
-      await startRecording(message.streamId!, message.micDeviceId);
+      await startRecording(
+        message.streamId!,
+        message.micDeviceId,
+        message.meetingTitle,
+        message.startedAt,
+      );
       sendResponse({ type: "OFFSCREEN_READY", includedMic, micLabel });
       return;
     }
@@ -71,12 +147,22 @@ async function handleMessage(
   }
 }
 
-async function startRecording(streamId: string, micDeviceId?: string): Promise<void> {
+async function startRecording(
+  streamId: string,
+  micDeviceId?: string,
+  meetingTitle?: string,
+  startedAt?: number,
+): Promise<void> {
   if (isRecording) {
     return;
   }
 
   abortRecording();
+  captureFlushPromise = null;
+  recordingMeta = {
+    meetingTitle,
+    startedAt: startedAt ?? Date.now(),
+  };
 
   tabStream = await navigator.mediaDevices.getUserMedia({
     audio: {
@@ -118,10 +204,7 @@ async function startRecording(streamId: string, micDeviceId?: string): Promise<v
     track.addEventListener(
       "ended",
       () => {
-        if (mediaRecorder?.state === "recording") {
-          mediaRecorder.requestData();
-        }
-        void chrome.runtime.sendMessage({ type: "TAB_CAPTURE_ENDED" });
+        void flushRecordingOnCaptureEnd("tab_closed");
       },
       { once: true },
     );
@@ -139,6 +222,7 @@ async function startRecording(streamId: string, micDeviceId?: string): Promise<v
     : "audio/webm";
 
   chunks = [];
+  lastStoppedBlob = null;
   mediaRecorder = new MediaRecorder(mixedStream, { mimeType });
 
   mediaRecorder.ondataavailable = (event) => {
@@ -152,11 +236,28 @@ async function startRecording(streamId: string, micDeviceId?: string): Promise<v
 }
 
 async function stopRecording(): Promise<Blob> {
+  if (lastStoppedBlob) {
+    return lastStoppedBlob;
+  }
+
+  if (activeStopPromise) {
+    return activeStopPromise;
+  }
+
   if (!mediaRecorder || mediaRecorder.state === "inactive") {
     throw new Error("No active recording");
   }
 
-  const recorder = mediaRecorder;
+  activeStopPromise = doStopRecording();
+  try {
+    return await activeStopPromise;
+  } finally {
+    activeStopPromise = null;
+  }
+}
+
+async function doStopRecording(): Promise<Blob> {
+  const recorder = mediaRecorder!;
 
   if (recorder.state === "recording") {
     recorder.requestData();
@@ -177,9 +278,11 @@ async function stopRecording(): Promise<Blob> {
   isRecording = false;
 
   if (blob.size === 0) {
+    lastStoppedBlob = null;
     throw new Error("Recording is empty");
   }
 
+  lastStoppedBlob = blob;
   return blob;
 }
 
@@ -193,6 +296,10 @@ function abortRecording(): void {
   }
   mediaRecorder = null;
   chunks = [];
+  lastStoppedBlob = null;
+  activeStopPromise = null;
+  captureFlushPromise = null;
+  recordingMeta = null;
   cleanupStreams();
   isRecording = false;
 }

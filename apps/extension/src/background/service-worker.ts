@@ -100,7 +100,35 @@ async function handleMessage(
     }
 
     if (message.type === "TAB_CAPTURE_ENDED") {
-      void stopRecordingAndFinalize({ reason: "capture_ended" }).catch(() => {});
+      void stopRecordingAndFinalize({ reason: "capture_ended" }).catch((err) => {
+        console.error("[recording] capture ended finalize failed", err);
+      });
+      sendResponse({ ok: true });
+      return;
+    }
+
+    if (message.type === "CAPTURE_ENDED_WITH_AUDIO") {
+      void handleCaptureEndedWithAudio(
+        message as {
+          audioBase64?: string;
+          mimeType?: string;
+          byteLength?: number;
+          reason?: "tab_closed" | "capture_ended";
+        },
+      );
+      sendResponse({ ok: true });
+      return;
+    }
+
+    if (message.type === "CAPTURE_ENDED_WITH_LOCAL_AUDIO") {
+      void handleCaptureEndedWithLocalAudio(
+        message as {
+          localAudioId?: string;
+          mimeType?: string;
+          byteLength?: number;
+          reason?: "tab_closed" | "capture_ended";
+        },
+      );
       sendResponse({ ok: true });
       return;
     }
@@ -182,6 +210,7 @@ async function handleStartRecording(
     await ensureOffscreenDocument();
     const settings = await getSettings();
     const micDeviceId = settings.microphoneDeviceId?.trim() || undefined;
+    const startedAt = Date.now();
     const startResult = await sendToOffscreen<{
       type: string;
       error?: string;
@@ -191,13 +220,14 @@ async function handleStartRecording(
       type: "OFFSCREEN_START",
       streamId,
       micDeviceId,
+      meetingTitle: message.meetingTitle ?? recordingTitle,
+      startedAt,
     });
 
     if (startResult.type === "RECORDING_ERROR") {
       throw new Error(startResult.error ?? "Failed to start offscreen recorder");
     }
 
-    const startedAt = Date.now();
     await setRecordingState({
       isRecording: true,
       tabId,
@@ -219,6 +249,99 @@ async function handleStartRecording(
   } catch (err) {
     await forceReleaseCapture();
     throw err;
+  }
+}
+
+async function handleCaptureEndedWithAudio(message: {
+  audioBase64?: string;
+  mimeType?: string;
+  byteLength?: number;
+  reason?: "tab_closed" | "capture_ended";
+}): Promise<void> {
+  if (!message.audioBase64) {
+    await stopRecordingAndFinalize({ reason: message.reason ?? "capture_ended" });
+    return;
+  }
+
+  const stored = await loadRecordingState();
+  recordingState = stored;
+
+  await stopRecordingAndFinalize({
+    reason: message.reason ?? "capture_ended",
+    capturedAudio: {
+      audioBase64: message.audioBase64,
+      mimeType: message.mimeType,
+      byteLength: message.byteLength,
+    },
+    meetingTitle: stored.meetingTitle,
+    startedAt: stored.startedAt,
+    tabId: stored.tabId,
+    force: !stored.isRecording,
+  });
+}
+
+async function handleCaptureEndedWithLocalAudio(message: {
+  localAudioId?: string;
+  mimeType?: string;
+  byteLength?: number;
+  reason?: "tab_closed" | "capture_ended";
+}): Promise<void> {
+  if (!message.localAudioId) {
+    await stopRecordingAndFinalize({ reason: message.reason ?? "capture_ended" });
+    return;
+  }
+
+  if (isFinalizingRecording) {
+    return;
+  }
+
+  const stored = await loadRecordingState();
+  recordingState = stored;
+
+  if (!stored.isRecording && !message.localAudioId) {
+    return;
+  }
+
+  isFinalizingRecording = true;
+  try {
+    const startedAt = stored.startedAt ?? Date.now();
+    const durationMs = Date.now() - startedAt;
+    const meetingTitle = stored.meetingTitle;
+    const tabId = stored.tabId;
+
+    const pending = await loadPendingAudio(message.localAudioId);
+    if (!pending) {
+      console.error("[recording] local audio missing after tab close", message.localAudioId);
+      return;
+    }
+
+    await setRecordingState({
+      isRecording: false,
+      tabId: undefined,
+      startedAt: undefined,
+      meetingTitle: undefined,
+      includedMic: undefined,
+      micLabel: undefined,
+      lastError: undefined,
+    });
+
+    if (tabId) {
+      await chrome.tabs.sendMessage(tabId, { type: "HIDE_CONSENT_BANNER" }).catch(() => {});
+    }
+
+    await closeOffscreenDocument();
+
+    await finalizeRecordingBytes(pending.bytes, {
+      mimeType: pending.meta.mimeType ?? message.mimeType ?? "audio/webm",
+      meetingTitle: meetingTitle ?? pending.meta.meetingTitle,
+      startedAt,
+      durationMs,
+      autoStoppedReason: message.reason ?? "tab_closed",
+      transcribe: true,
+      existingLocalAudioId: message.localAudioId,
+    });
+  } finally {
+    isFinalizingRecording = false;
   }
 }
 
@@ -274,32 +397,63 @@ async function handleStopRecording(
 async function stopRecordingAndFinalize(opts?: {
   reason?: "tab_closed" | "capture_ended";
   transcribe?: boolean;
+  force?: boolean;
+  meetingTitle?: string;
+  startedAt?: number;
+  tabId?: number;
+  capturedAudio?: {
+    audioBase64: string;
+    mimeType?: string;
+    byteLength?: number;
+  };
 }): Promise<FinalizeResult | null> {
   if (isFinalizingRecording) {
     return null;
   }
 
   const status = await loadRecordingState();
-  if (!status.isRecording) {
+  if (!status.isRecording && !opts?.force && !opts?.capturedAudio) {
     return null;
   }
+  recordingState = status;
 
   isFinalizingRecording = true;
   try {
-    let response: OffscreenStopResponse;
-    try {
-      response = await sendToOffscreen<OffscreenStopResponse>({
-        type: "OFFSCREEN_STOP",
-      });
-    } catch {
-      await forceReleaseCapture();
-      return null;
-    }
-
-    const startedAt = status.startedAt ?? Date.now();
+    const startedAt = opts?.startedAt ?? status.startedAt ?? Date.now();
     const durationMs = Date.now() - startedAt;
-    const meetingTitle = status.meetingTitle;
-    const tabId = status.tabId;
+    const meetingTitle = opts?.meetingTitle ?? status.meetingTitle;
+    const tabId = opts?.tabId ?? status.tabId;
+
+    let response: OffscreenStopResponse;
+    if (opts?.capturedAudio) {
+      response = {
+        type: "RECORDING_STOPPED",
+        audioBase64: opts.capturedAudio.audioBase64,
+        mimeType: opts.capturedAudio.mimeType,
+        byteLength: opts.capturedAudio.byteLength,
+      };
+    } else {
+      try {
+        response = await sendToOffscreen<OffscreenStopResponse>({
+          type: "OFFSCREEN_STOP",
+        });
+      } catch {
+        // Offscreen may be flushing audio after tab close — wait before giving up.
+        await sleep(2500);
+        const afterFlush = await loadRecordingState();
+        if (!afterFlush.isRecording) {
+          return null;
+        }
+        try {
+          response = await sendToOffscreen<OffscreenStopResponse>({
+            type: "OFFSCREEN_STOP",
+          });
+        } catch {
+          await forceReleaseCapture();
+          return null;
+        }
+      }
+    }
 
     if (response.type === "RECORDING_ERROR" || !response.audioBase64) {
       const error =
@@ -367,6 +521,7 @@ async function finalizeRecordingBytes(
     durationMs: number;
     autoStoppedReason?: "tab_closed" | "capture_ended";
     transcribe?: boolean;
+    existingLocalAudioId?: string;
   },
 ): Promise<FinalizeResult> {
   const {
@@ -376,6 +531,7 @@ async function finalizeRecordingBytes(
     mimeType,
     autoStoppedReason,
     transcribe = true,
+    existingLocalAudioId,
   } = params;
   const titleSuffix =
     autoStoppedReason === "tab_closed"
@@ -387,13 +543,15 @@ async function finalizeRecordingBytes(
     ? `${meetingTitle}${titleSuffix}`
     : `Recording${titleSuffix}`;
 
-  const localAudioId = crypto.randomUUID();
-  await savePendingAudio(localAudioId, audioBytes, {
-    mimeType,
-    meetingTitle: displayTitle,
-    startedAt: new Date(startedAt).toISOString(),
-    durationMs,
-  });
+  const localAudioId = existingLocalAudioId ?? crypto.randomUUID();
+  if (!existingLocalAudioId) {
+    await savePendingAudio(localAudioId, audioBytes, {
+      mimeType,
+      meetingTitle: displayTitle,
+      startedAt: new Date(startedAt).toISOString(),
+      durationMs,
+    });
+  }
 
   if (!transcribe) {
     const entry: StoredRecording = {
@@ -547,10 +705,22 @@ async function getReconciledStatus(): Promise<RecordingState> {
     return recordingState;
   }
 
-  if (stored.isRecording) {
-    await clearRecordingState();
-    recordingState = { isRecording: false };
-    return recordingState;
+  if (stored.isRecording && !offscreen.isRecording) {
+    if (isFinalizingRecording) {
+      recordingState = stored;
+      return stored;
+    }
+    if (await isOffscreenDocumentOpen()) {
+      try {
+        await sendToOffscreen({ type: "OFFSCREEN_FLUSH", reason: "capture_ended" });
+      } catch {
+        void stopRecordingAndFinalize({ reason: "capture_ended" }).catch((err) => {
+          console.error("[recording] reconcile finalize failed", err);
+        });
+      }
+    }
+    recordingState = stored;
+    return stored;
   }
 
   recordingState = stored;
@@ -626,6 +796,9 @@ async function sendToOffscreen<T>(message: {
   type: string;
   streamId?: string;
   micDeviceId?: string;
+  meetingTitle?: string;
+  startedAt?: number;
+  reason?: "tab_closed" | "capture_ended";
 }): Promise<T> {
   const payload = { ...message, target: OFFSCREEN_TARGET };
 
@@ -703,7 +876,26 @@ async function trackTranscription(id: string): Promise<void> {
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  if (recordingState.isRecording && recordingState.tabId === tabId) {
-    void stopRecordingAndFinalize({ reason: "tab_closed" }).catch(() => {});
-  }
+  void (async () => {
+    const stored = await loadRecordingState();
+    recordingState = stored;
+    if (!stored.isRecording || stored.tabId !== tabId) {
+      return;
+    }
+
+    // Ask offscreen to flush — do not race OFFSCREEN_STOP against track-ended flush.
+    try {
+      await sendToOffscreen({ type: "OFFSCREEN_FLUSH", reason: "tab_closed" });
+    } catch {
+      // offscreen may already be flushing after capture track ended
+    }
+
+    await sleep(4000);
+    const still = await loadRecordingState();
+    if (still.isRecording && !isFinalizingRecording) {
+      await stopRecordingAndFinalize({ reason: "tab_closed" }).catch((err) => {
+        console.error("[recording] tab close finalize failed", err);
+      });
+    }
+  })();
 });
