@@ -4,6 +4,8 @@ export interface PendingAudioMeta {
   startedAt: string;
   durationMs: number;
   byteLength: number;
+  micByteLength?: number;
+  micMimeType?: string;
   createdAt: string;
 }
 
@@ -27,20 +29,29 @@ function openDb(): Promise<IDBDatabase> {
 
 interface StoredPending {
   bytes: ArrayBuffer;
+  micBytes?: ArrayBuffer;
   meta: PendingAudioMeta;
 }
 
 export async function savePendingAudio(
   id: string,
   bytes: Uint8Array,
-  meta: Omit<PendingAudioMeta, "byteLength" | "createdAt">,
+  meta: Omit<PendingAudioMeta, "byteLength" | "micByteLength" | "createdAt"> & {
+    micBytes?: Uint8Array;
+  },
 ): Promise<void> {
   const db = await openDb();
+  const { micBytes, micMimeType, ...rest } = meta;
   const payload: StoredPending = {
     bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    micBytes: micBytes
+      ? micBytes.buffer.slice(micBytes.byteOffset, micBytes.byteOffset + micBytes.byteLength)
+      : undefined,
     meta: {
-      ...meta,
+      ...rest,
+      micMimeType: micBytes ? micMimeType ?? rest.mimeType : undefined,
       byteLength: bytes.length,
+      micByteLength: micBytes?.length,
       createdAt: new Date().toISOString(),
     },
   };
@@ -58,7 +69,7 @@ export async function savePendingAudio(
 
 export async function loadPendingAudio(
   id: string,
-): Promise<{ bytes: Uint8Array; meta: PendingAudioMeta } | null> {
+): Promise<{ bytes: Uint8Array; micBytes?: Uint8Array; meta: PendingAudioMeta } | null> {
   const db = await openDb();
   const stored = await new Promise<StoredPending | undefined>((resolve, reject) => {
     const tx = db.transaction(STORE, "readonly");
@@ -74,6 +85,7 @@ export async function loadPendingAudio(
 
   return {
     bytes: new Uint8Array(stored.bytes),
+    micBytes: stored.micBytes ? new Uint8Array(stored.micBytes) : undefined,
     meta: stored.meta,
   };
 }

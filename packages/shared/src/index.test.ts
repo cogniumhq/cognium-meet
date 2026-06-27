@@ -10,11 +10,11 @@ describe("formatTimestamp", () => {
 });
 
 describe("segmentsToPlainText", () => {
-  it("renders timestamped lines", () => {
+  it("renders timestamped lines with optional speaker", () => {
     const text = segmentsToPlainText([
-      { start: 0, end: 4, text: "Hello" },
-      { start: 12, end: 20, text: "World" },
+      { start: 0, end: 4, text: "Hello", speaker: "You" },
+      { start: 12, end: 20, text: "World", speaker: "Others" },
     ]);
-    expect(text).toBe("[00:00:00] Hello\n[00:00:12] World");
+    expect(text).toBe("[00:00:00] You: Hello\n[00:00:12] Others: World");
   });
 });

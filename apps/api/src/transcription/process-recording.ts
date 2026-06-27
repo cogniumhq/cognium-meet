@@ -1,6 +1,11 @@
 import type { RecordingMeta } from "@cognium/meet-shared";
 import type { TranscriptionProvider } from "./provider.js";
 import { RecordingStore } from "../storage/recording-store.js";
+import {
+  mergeSpeakerSegments,
+  SPEAKER_OTHERS,
+  SPEAKER_YOU,
+} from "./merge-segments.js";
 
 export interface ProcessingDeps {
   store: RecordingStore;
@@ -37,9 +42,26 @@ export async function processRecording(
 
   console.log(`[transcription] started id=${id} title=${meta.meetingTitle ?? "(none)"}`);
 
-  const result = await deps.transcription.transcribe(deps.store.audioPath(id), {
-    meetingTitle: meta.meetingTitle,
-  });
+  const transcribeOpts = { meetingTitle: meta.meetingTitle };
+  const tabResult = await deps.transcription.transcribe(deps.store.audioPath(id), transcribeOpts);
+
+  const hasMic = await deps.store.micAudioExists(id);
+  let result = tabResult;
+  if (hasMic) {
+    const micResult = await deps.transcription.transcribe(deps.store.micAudioPath(id), transcribeOpts);
+    result = {
+      recordingId: tabResult.recordingId,
+      language: tabResult.language ?? micResult.language,
+      duration: Math.max(tabResult.duration ?? 0, micResult.duration ?? 0) || undefined,
+      segments: mergeSpeakerSegments(
+        { speaker: SPEAKER_OTHERS, segments: tabResult.segments },
+        { speaker: SPEAKER_YOU, segments: micResult.segments },
+      ),
+    };
+    console.log(
+      `[transcription] dual-track id=${id} others=${tabResult.segments.length} you=${micResult.segments.length}`,
+    );
+  }
 
   const stillExists = await deps.store.getMeta(id);
   if (!stillExists) {

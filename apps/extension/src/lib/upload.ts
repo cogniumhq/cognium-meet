@@ -10,6 +10,8 @@ export interface UploadResult {
 export async function uploadRecording(params: {
   bytes: Uint8Array;
   mimeType?: string;
+  micBytes?: Uint8Array;
+  micMimeType?: string;
   meetingTitle?: string;
   startedAt: number;
   durationMs: number;
@@ -32,6 +34,13 @@ export async function uploadRecording(params: {
     new Blob([params.bytes], { type: params.mimeType ?? "audio/webm" }),
     "recording.webm",
   );
+  if (params.micBytes && params.micBytes.length > 0 && isLikelyAudio(params.micBytes)) {
+    form.append(
+      "micAudio",
+      new Blob([params.micBytes], { type: params.micMimeType ?? "audio/webm" }),
+      "mic.webm",
+    );
+  }
   if (params.meetingTitle) {
     form.append("meetingTitle", params.meetingTitle);
   }

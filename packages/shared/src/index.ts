@@ -4,6 +4,8 @@ export interface TranscriptSegment {
   start: number;
   end: number;
   text: string;
+  /** Present when recorded with separate mic + tab tracks (e.g. "You", "Others"). */
+  speaker?: string;
 }
 
 export interface TranscriptResult {
@@ -43,6 +45,9 @@ export function formatTimestamp(seconds: number): string {
 
 export function segmentsToPlainText(segments: TranscriptSegment[]): string {
   return segments
-    .map((seg) => `[${formatTimestamp(seg.start)}] ${seg.text.trim()}`)
+    .map((seg) => {
+      const who = seg.speaker ? `${seg.speaker}: ` : "";
+      return `[${formatTimestamp(seg.start)}] ${who}${seg.text.trim()}`;
+    })
     .join("\n");
 }
