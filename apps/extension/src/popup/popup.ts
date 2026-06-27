@@ -12,6 +12,7 @@ import {
 } from "../lib/upload.js";
 import { deletePendingAudio, downloadPendingAudio } from "../lib/pending-audio-store.js";
 import { isRecordableTabUrl } from "../lib/recordable-tab.js";
+import { initSettingsForm } from "../lib/settings-form.js";
 
 const startBtn = document.getElementById("start-btn") as HTMLButtonElement;
 const stopOnlyBtn = document.getElementById("stop-only-btn") as HTMLButtonElement;
@@ -20,7 +21,10 @@ const statusText = document.getElementById("status-text") as HTMLParagraphElemen
 const recordingIndicator = document.getElementById("recording-indicator") as HTMLDivElement;
 const timerEl = document.getElementById("timer") as HTMLSpanElement;
 const historyList = document.getElementById("history-list") as HTMLUListElement;
-const optionsLink = document.getElementById("options-link") as HTMLAnchorElement;
+const mainView = document.getElementById("main-view") as HTMLDivElement;
+const settingsView = document.getElementById("settings-view") as HTMLDivElement;
+const settingsOpenBtn = document.getElementById("settings-open-btn") as HTMLButtonElement;
+const settingsBackBtn = document.getElementById("settings-back-btn") as HTMLButtonElement;
 
 let timerInterval: number | undefined;
 let recordingStartedAt: number | undefined;
@@ -41,10 +45,9 @@ function recordingMicNote(status: {
 }
 
 async function init(): Promise<void> {
-  optionsLink.addEventListener("click", (e) => {
-    e.preventDefault();
-    void chrome.runtime.openOptionsPage();
-  });
+  settingsOpenBtn.addEventListener("click", () => showSettings(true));
+  settingsBackBtn.addEventListener("click", () => showSettings(false));
+  await initSettingsForm(document.getElementById("settings-root")!);
 
   startBtn.addEventListener("click", () => void startRecording());
   stopOnlyBtn.addEventListener("click", () => void stopRecording(false));
@@ -59,6 +62,11 @@ async function init(): Promise<void> {
 
   await refreshStaleHistory();
   await renderHistory();
+}
+
+function showSettings(open: boolean): void {
+  mainView.classList.toggle("hidden", open);
+  settingsView.classList.toggle("hidden", !open);
 }
 
 async function startRecording(): Promise<void> {

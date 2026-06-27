@@ -37,7 +37,9 @@ export async function processRecording(
 
   console.log(`[transcription] started id=${id} title=${meta.meetingTitle ?? "(none)"}`);
 
-  const result = await deps.transcription.transcribe(deps.store.audioPath(id));
+  const result = await deps.transcription.transcribe(deps.store.audioPath(id), {
+    meetingTitle: meta.meetingTitle,
+  });
 
   const stillExists = await deps.store.getMeta(id);
   if (!stillExists) {

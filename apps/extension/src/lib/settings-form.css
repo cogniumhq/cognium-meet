@@ -1,0 +1,254 @@
+.settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-header h2 {
+  margin: 0;
+  font-size: 16px;
+  flex: 1;
+}
+
+.back-link {
+  background: transparent;
+  color: #60a5fa;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.back-link:hover {
+  background: transparent;
+  text-decoration: underline;
+}
+
+.settings-card {
+  background: #1e293b;
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-card h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.settings-card p {
+  margin: 0;
+  font-size: 11px;
+  color: #94a3b8;
+  line-height: 1.45;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.field input,
+.field select {
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 10px;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+.field input:focus,
+.field select:focus {
+  outline: 2px solid #2563eb;
+  outline-offset: 0;
+  border-color: #2563eb;
+}
+
+.field input:disabled,
+.field select:disabled {
+  opacity: 0.55;
+}
+
+.token-row {
+  display: flex;
+  gap: 6px;
+}
+
+.token-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.token-toggle {
+  flex-shrink: 0;
+  background: #334155;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.token-toggle:hover {
+  background: #475569;
+}
+
+.save-settings-btn {
+  margin-top: 2px;
+}
+
+.mic-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mic-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+
+.mic-badge--granted {
+  background: #14532d;
+  color: #86efac;
+}
+
+.mic-badge--denied {
+  background: #7f1d1d;
+  color: #fca5a5;
+}
+
+.mic-badge--unknown {
+  background: #334155;
+  color: #cbd5e1;
+}
+
+.mic-btn {
+  background: #334155;
+  font-size: 12px;
+  padding: 8px 10px;
+}
+
+.mic-btn:hover {
+  background: #475569;
+}
+
+.save-status {
+  margin: 0;
+  font-size: 12px;
+}
+
+.save-status--ok {
+  color: #86efac;
+}
+
+.save-status--error {
+  color: #fca5a5;
+}
+
+/* Light theme (options page) */
+body.options-page {
+  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+body.options-page .container {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 28px 20px 40px;
+}
+
+body.options-page h1 {
+  margin: 0 0 6px;
+  font-size: 22px;
+}
+
+body.options-page .page-lead {
+  margin: 0 0 20px;
+  font-size: 14px;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+body.options-page .settings-card {
+  background: white;
+  border: 1px solid #e2e8f0;
+}
+
+body.options-page .settings-card h3 {
+  color: #64748b;
+}
+
+body.options-page .settings-card p {
+  color: #64748b;
+}
+
+body.options-page .field label {
+  color: #334155;
+}
+
+body.options-page .field input,
+body.options-page .field select {
+  background: white;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+body.options-page .token-toggle,
+body.options-page .mic-btn {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+body.options-page .token-toggle:hover,
+body.options-page .mic-btn:hover {
+  background: #cbd5e1;
+}
+
+body.options-page .mic-badge--unknown {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+body.options-page .back-link {
+  display: none;
+}
+
+body.options-page button.save-settings-btn {
+  align-self: flex-start;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 14px;
+  background: #2563eb;
+  color: white;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+body.options-page button.save-settings-btn:hover {
+  background: #1d4ed8;
+}

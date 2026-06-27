@@ -124,10 +124,17 @@ button:disabled {
   color: #94a3b8;
 }
 
-#options-link {
-  font-size: 12px;
+.text-link {
+  background: transparent;
   color: #60a5fa;
-  text-decoration: none;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.text-link:hover {
+  background: transparent;
+  text-decoration: underline;
 }
 
 #history-list {

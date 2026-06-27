@@ -5,37 +5,93 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Cognium Meet</title>
     <link rel="stylesheet" href="./popup.css" />
+    <link rel="stylesheet" href="../lib/settings-form.css" />
   </head>
   <body>
     <main class="container">
-      <header>
-        <h1>Cognium Meet</h1>
-        <p class="subtitle">Record &amp; transcribe the active tab</p>
-      </header>
+      <div id="main-view">
+        <header>
+          <h1>Cognium Meet</h1>
+          <p class="subtitle">Record &amp; transcribe the active tab</p>
+        </header>
 
-      <section id="status-section">
-        <div id="recording-indicator" class="hidden">
-          <span class="dot"></span>
-          <span id="timer">00:00</span>
+        <section id="status-section">
+          <div id="recording-indicator" class="hidden">
+            <span class="dot"></span>
+            <span id="timer">00:00</span>
+          </div>
+          <p id="status-text">Ready</p>
+        </section>
+
+        <div class="actions">
+          <button id="start-btn" type="button">Start recording</button>
+          <button id="stop-only-btn" type="button" class="hidden secondary">
+            Stop recording
+          </button>
+          <button id="stop-btn" type="button" class="hidden danger">Stop &amp; transcribe</button>
         </div>
-        <p id="status-text">Ready</p>
-      </section>
 
-      <div class="actions">
-        <button id="start-btn" type="button">Start recording</button>
-        <button id="stop-only-btn" type="button" class="hidden secondary">
-          Stop recording
-        </button>
-        <button id="stop-btn" type="button" class="hidden danger">Stop &amp; transcribe</button>
+        <section id="history-section">
+          <div class="history-header">
+            <h2>Recent transcripts</h2>
+            <button id="settings-open-btn" type="button" class="text-link">Settings</button>
+          </div>
+          <ul id="history-list"></ul>
+        </section>
       </div>
 
-      <section id="history-section">
-        <div class="history-header">
-          <h2>Recent transcripts</h2>
-          <a id="options-link" href="#">Settings</a>
+      <div id="settings-view" class="hidden">
+        <div class="settings-panel" id="settings-root">
+          <div class="settings-header">
+            <button id="settings-back-btn" type="button" class="back-link">← Back</button>
+            <h2>Settings</h2>
+          </div>
+
+          <section class="settings-card">
+            <h3>API connection</h3>
+            <p>Your OpenAI key stays on the server. Only the API URL and bearer token are stored here.</p>
+
+            <div class="field">
+              <label for="api-url">API URL</label>
+              <input id="api-url" type="url" required placeholder="http://localhost:3847" />
+            </div>
+
+            <div class="field">
+              <label for="api-token">API token</label>
+              <div class="token-row">
+                <input id="api-token" type="password" placeholder="Bearer token" autocomplete="off" />
+                <button id="token-toggle" type="button" class="token-toggle" aria-pressed="false">
+                  Show
+                </button>
+              </div>
+            </div>
+
+            <button id="save-settings-btn" type="button" class="save-settings-btn">Save connection</button>
+          </section>
+
+          <section class="settings-card">
+            <h3>Microphone</h3>
+            <p id="mic-hint">
+              Tab audio is always recorded. Your mic is mixed in so your voice is included.
+              Chrome ignores Linux/GNOME input settings — pick the device below.
+            </p>
+
+            <div class="mic-row">
+              <span id="mic-badge" class="mic-badge mic-badge--unknown">Not set</span>
+              <button id="mic-btn" type="button" class="mic-btn">Allow microphone</button>
+            </div>
+
+            <div class="field">
+              <label for="mic-device">Recording device</label>
+              <select id="mic-device" disabled>
+                <option value="">Chrome default</option>
+              </select>
+            </div>
+          </section>
+
+          <p id="save-status" class="save-status hidden"></p>
         </div>
-        <ul id="history-list"></ul>
-      </section>
+      </div>
     </main>
     <script type="module" src="./popup.ts"></script>
   </body>

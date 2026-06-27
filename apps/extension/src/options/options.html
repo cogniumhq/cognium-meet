@@ -4,61 +4,61 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Cognium Meet Settings</title>
-    <link rel="stylesheet" href="./options.css" />
+    <link rel="stylesheet" href="../lib/settings-form.css" />
   </head>
-  <body>
+  <body class="options-page">
     <main class="container">
-      <h1>Cognium Meet Settings</h1>
-      <p class="hint">
-        Configure the transcription API. Your OpenAI key stays on the server — only
-        the API URL and bearer token are stored here.
+      <h1>Cognium Meet</h1>
+      <p class="page-lead">
+        Connect to your transcription API and choose which microphone is mixed into
+        recordings.
       </p>
 
-      <form id="settings-form">
-        <label>
-          API URL
-          <input id="api-url" type="url" required placeholder="http://localhost:3847" />
-        </label>
+      <div class="settings-panel" id="settings-root">
+        <section class="settings-card">
+          <h3>API connection</h3>
+          <p>Your OpenAI key stays on the server. Only the API URL and bearer token are stored here.</p>
 
-        <label>
-          API Token
-          <input id="api-token" type="password" placeholder="Bearer token" />
-        </label>
+          <div class="field">
+            <label for="api-url">API URL</label>
+            <input id="api-url" type="url" required placeholder="http://localhost:3847" />
+          </div>
 
-        <button type="submit">Save</button>
-      </form>
+          <div class="field">
+            <label for="api-token">API token</label>
+            <div class="token-row">
+              <input id="api-token" type="password" placeholder="Bearer token" autocomplete="off" />
+              <button id="token-toggle" type="button" class="token-toggle" aria-pressed="false">
+                Show
+              </button>
+            </div>
+          </div>
 
-      <p id="save-status" class="hidden"></p>
+          <button id="save-settings-btn" type="button" class="save-settings-btn">Save connection</button>
+        </section>
 
-      <section class="mic">
-        <h2>Microphone</h2>
-        <p class="hint">
-          Most voice and video sites do not play your own microphone back into the
-          tab, so the recorder also captures your microphone to include what you
-          say. Grant access once; it is mixed with tab audio while recording.
-        </p>
-        <p class="hint warn">
-          Chrome uses its own microphone choice, not your Linux/GNOME Sound Input
-          setting. Pick the device below so recording uses the mic you expect.
-        </p>
-        <button id="mic-btn" type="button">Grant microphone access</button>
-        <p id="mic-status" class="hidden"></p>
-        <label id="mic-device-label" class="hidden">
-          Recording microphone
-          <select id="mic-device" disabled>
-            <option value="">Chrome default</option>
-          </select>
-        </label>
-      </section>
+        <section class="settings-card">
+          <h3>Microphone</h3>
+          <p id="mic-hint">
+            Tab audio is always recorded. Your mic is mixed in so your voice is included.
+            Chrome ignores Linux/GNOME input settings — pick the device below.
+          </p>
 
-      <section class="legal">
-        <h2>Recording consent</h2>
-        <p>
-          You are responsible for informing everyone on the call or page that audio
-          is being recorded, in accordance with local laws and your organization’s
-          policies.
-        </p>
-      </section>
+          <div class="mic-row">
+            <span id="mic-badge" class="mic-badge mic-badge--unknown">Not set</span>
+            <button id="mic-btn" type="button" class="mic-btn">Allow microphone</button>
+          </div>
+
+          <div class="field">
+            <label for="mic-device">Recording device</label>
+            <select id="mic-device" disabled>
+              <option value="">Chrome default</option>
+            </select>
+          </div>
+        </section>
+
+        <p id="save-status" class="save-status hidden"></p>
+      </div>
     </main>
     <script type="module" src="./options.ts"></script>
   </body>
