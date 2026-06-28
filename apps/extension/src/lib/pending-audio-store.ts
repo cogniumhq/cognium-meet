@@ -103,12 +103,31 @@ export async function deletePendingAudio(id: string): Promise<void> {
   });
 }
 
-export async function downloadPendingAudio(id: string, filename: string): Promise<void> {
+export async function downloadPendingAudio(
+  id: string,
+  filename: string,
+  track: "tab" | "mic" = "tab",
+): Promise<void> {
   const pending = await loadPendingAudio(id);
   if (!pending) {
     throw new Error("Local recording not found — it may have been uploaded or cleared");
   }
-  const blob = new Blob([pending.bytes], { type: pending.meta.mimeType });
+
+  const bytes = track === "mic" ? pending.micBytes : pending.bytes;
+  if (!bytes?.length) {
+    throw new Error(
+      track === "mic"
+        ? "No microphone track — allow mic in Settings and record again"
+        : "Tab audio missing from local backup",
+    );
+  }
+
+  const mimeType =
+    track === "mic"
+      ? pending.meta.micMimeType ?? pending.meta.mimeType
+      : pending.meta.mimeType;
+
+  const blob = new Blob([bytes], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;

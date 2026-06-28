@@ -10,7 +10,7 @@ import {
   pollRecording,
   retryRecording,
 } from "../lib/upload.js";
-import { deletePendingAudio, downloadPendingAudio } from "../lib/pending-audio-store.js";
+import { deletePendingAudio, downloadPendingAudio, loadPendingAudio } from "../lib/pending-audio-store.js";
 import { isRecordableTabUrl } from "../lib/recordable-tab.js";
 import { initSettingsForm } from "../lib/settings-form.js";
 
@@ -352,6 +352,7 @@ function appendLocalAudioActions(
   li: HTMLLIElement,
   item: { id: string; localAudioId?: string; meetingTitle?: string },
   uploadLabel = "Retry upload",
+  hasMicTrack = false,
 ): void {
   if (!item.localAudioId) {
     return;
@@ -359,6 +360,7 @@ function appendLocalAudioActions(
 
   const links = document.createElement("div");
   links.className = "history-links";
+  const base = (item.meetingTitle ?? "recording").replace(/[/\\?%*:|"<>]/g, "-");
 
   const upload = document.createElement("button");
   upload.type = "button";
@@ -369,19 +371,29 @@ function appendLocalAudioActions(
   });
   links.appendChild(upload);
 
-  const download = document.createElement("button");
-  download.type = "button";
-  download.className = "link-btn";
-  download.textContent = "Download audio";
-  download.addEventListener("click", () => {
-    void downloadPendingAudio(
-      item.localAudioId!,
-      `${item.meetingTitle ?? "recording"}.webm`,
-    ).catch((err) =>
+  const tabDownload = document.createElement("button");
+  tabDownload.type = "button";
+  tabDownload.className = "link-btn";
+  tabDownload.textContent = hasMicTrack ? "Download tab" : "Download audio";
+  tabDownload.addEventListener("click", () => {
+    void downloadPendingAudio(item.localAudioId!, `${base}-tab.webm`, "tab").catch((err) =>
       setStatus(err instanceof Error ? err.message : String(err), true),
     );
   });
-  links.appendChild(download);
+  links.appendChild(tabDownload);
+
+  if (hasMicTrack) {
+    const micDownload = document.createElement("button");
+    micDownload.type = "button";
+    micDownload.className = "link-btn";
+    micDownload.textContent = "Download mic";
+    micDownload.addEventListener("click", () => {
+      void downloadPendingAudio(item.localAudioId!, `${base}-mic.webm`, "mic").catch((err) =>
+        setStatus(err instanceof Error ? err.message : String(err), true),
+      );
+    });
+    links.appendChild(micDownload);
+  }
 
   const del = document.createElement("button");
   del.type = "button";
@@ -452,11 +464,13 @@ async function renderHistory(): Promise<void> {
         err.textContent = item.error;
         li.appendChild(err);
       }
-      appendLocalAudioActions(li, item);
+      const pending = await loadPendingAudio(item.localAudioId);
+      appendLocalAudioActions(li, item, "Retry upload", Boolean(pending?.micBytes?.length));
     }
 
     if (item.status === "saved" && item.localAudioId) {
-      appendLocalAudioActions(li, item, "Transcribe");
+      const pending = await loadPendingAudio(item.localAudioId);
+      appendLocalAudioActions(li, item, "Transcribe", Boolean(pending?.micBytes?.length));
     }
 
     if (item.status === "failed" && !item.localAudioId) {
