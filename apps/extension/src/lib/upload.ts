@@ -10,8 +10,6 @@ export interface UploadResult {
 export async function uploadRecording(params: {
   bytes: Uint8Array;
   mimeType?: string;
-  micBytes?: Uint8Array;
-  micMimeType?: string;
   meetingTitle?: string;
   startedAt: number;
   durationMs: number;
@@ -34,13 +32,6 @@ export async function uploadRecording(params: {
     new Blob([params.bytes], { type: params.mimeType ?? "audio/webm" }),
     "recording.webm",
   );
-  if (params.micBytes && params.micBytes.length > 0 && isLikelyAudio(params.micBytes)) {
-    form.append(
-      "micAudio",
-      new Blob([params.micBytes], { type: params.micMimeType ?? "audio/webm" }),
-      "mic.webm",
-    );
-  }
   if (params.meetingTitle) {
     form.append("meetingTitle", params.meetingTitle);
   }
@@ -119,7 +110,11 @@ export async function deleteServerRecording(id: string): Promise<void> {
 
 export async function pollRecording(
   id: string,
-  opts?: { intervalMs?: number; timeoutMs?: number },
+  opts?: {
+    intervalMs?: number;
+    timeoutMs?: number;
+    onUpdate?: (meta: RecordingMeta) => void;
+  },
 ): Promise<RecordingMeta> {
   const settings = await getSettings();
   const intervalMs = opts?.intervalMs ?? 2000;
@@ -139,6 +134,7 @@ export async function pollRecording(
       throw new Error(`Status check failed (${response.status})`);
     }
     const meta = (await response.json()) as RecordingMeta;
+    opts?.onUpdate?.(meta);
     if (meta.status === "completed" || meta.status === "failed") {
       return meta;
     }

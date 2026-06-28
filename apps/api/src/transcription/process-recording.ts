@@ -1,11 +1,24 @@
-import type { RecordingMeta } from "@cognium/meet-shared";
+import type { RecordingMeta, TranscriptionProgress } from "@cognium/meet-shared";
 import type { TranscriptionProvider } from "./provider.js";
 import { RecordingStore } from "../storage/recording-store.js";
-import {
-  mergeSpeakerSegments,
-  SPEAKER_OTHERS,
-  SPEAKER_YOU,
-} from "./merge-segments.js";
+
+async function saveProgress(
+  store: RecordingStore,
+  id: string,
+  progress: TranscriptionProgress,
+): Promise<void> {
+  const meta = await store.getMeta(id);
+  if (!meta || meta.status !== "processing") {
+    return;
+  }
+  await store.saveMeta({
+    ...meta,
+    progress: {
+      ...progress,
+      updatedAt: progress.updatedAt ?? new Date().toISOString(),
+    },
+  });
+}
 
 export interface ProcessingDeps {
   store: RecordingStore;
@@ -13,11 +26,15 @@ export interface ProcessingDeps {
   deleteAudioAfterTranscription: boolean;
 }
 
-const PROCESSING_STALE_MS = 20 * 60 * 1000;
+const PROCESSING_STALE_MS = 90 * 60 * 1000;
 const activeJobs = new Set<string>();
 
 export function cancelTranscription(id: string): void {
   activeJobs.delete(id);
+}
+
+export function isTranscriptionActive(id: string): boolean {
+  return activeJobs.has(id);
 }
 
 export async function processRecording(
@@ -42,31 +59,20 @@ export async function processRecording(
 
   console.log(`[transcription] started id=${id} title=${meta.meetingTitle ?? "(none)"}`);
 
-  const transcribeOpts = { meetingTitle: meta.meetingTitle };
-  const tabResult = await deps.transcription.transcribe(deps.store.audioPath(id), transcribeOpts);
-
-  const hasMic = await deps.store.micAudioExists(id);
-  let result = tabResult;
-  if (hasMic) {
-    const micResult = await deps.transcription.transcribe(deps.store.micAudioPath(id), transcribeOpts);
-    result = {
-      recordingId: tabResult.recordingId,
-      language: tabResult.language ?? micResult.language,
-      duration: Math.max(tabResult.duration ?? 0, micResult.duration ?? 0) || undefined,
-      segments: mergeSpeakerSegments(
-        { speaker: SPEAKER_OTHERS, segments: tabResult.segments },
-        { speaker: SPEAKER_YOU, segments: micResult.segments },
-      ),
-    };
-    console.log(
-      `[transcription] dual-track id=${id} others=${tabResult.segments.length} you=${micResult.segments.length}`,
-    );
-  }
+  const result = await deps.transcription.transcribe(deps.store.audioPath(id), {
+    meetingTitle: meta.meetingTitle,
+    onProgress: (progress) => saveProgress(deps.store, id, progress),
+  });
 
   const stillExists = await deps.store.getMeta(id);
   if (!stillExists) {
     return;
   }
+
+  await saveProgress(deps.store, id, {
+    phase: "saving",
+    label: "Saving transcript…",
+  });
 
   await deps.store.saveTranscript(id, result);
 
@@ -76,6 +82,7 @@ export async function processRecording(
     language: result.language,
     error: undefined,
     processingStartedAt: undefined,
+    progress: undefined,
   };
   await deps.store.saveMeta(completed);
 
@@ -102,6 +109,7 @@ export async function markRecordingFailed(
     status: "failed",
     error,
     processingStartedAt: undefined,
+    progress: undefined,
   });
   console.log(`[transcription] failed id=${id} error=${error}`);
 }

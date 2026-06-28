@@ -12,6 +12,7 @@ import {
   markRecordingFailed,
   processRecording,
   cancelTranscription,
+  isTranscriptionActive,
   type ProcessingDeps,
 } from "./transcription/process-recording.js";
 import { requestLog } from "./middleware/request-log.js";
@@ -72,7 +73,6 @@ export function createApp(deps: AppDeps) {
     async (c) => {
       const contentType = c.req.header("content-type") ?? "";
     let buffer: Buffer;
-    let micBuffer: Buffer | undefined;
     let meetingTitle: string | undefined;
     let startedAt: string;
     let durationMs: number | undefined;
@@ -80,7 +80,6 @@ export function createApp(deps: AppDeps) {
     if (contentType.includes("multipart/form-data")) {
       const form = await c.req.parseBody();
       const audio = form.audio;
-      const micAudio = form.micAudio;
 
       if (!(audio instanceof File)) {
         return c.json({ error: "Missing audio file" }, 400);
@@ -98,13 +97,6 @@ export function createApp(deps: AppDeps) {
           : undefined;
 
       buffer = Buffer.from(await audio.arrayBuffer());
-
-      if (micAudio instanceof File && micAudio.size > 0) {
-        const candidate = Buffer.from(await micAudio.arrayBuffer());
-        if (isLikelyAudio(candidate)) {
-          micBuffer = candidate;
-        }
-      }
     } else {
       let body: {
         audioBase64?: string;
@@ -143,9 +135,6 @@ export function createApp(deps: AppDeps) {
 
     const id = uuidv4();
     await deps.store.saveAudio(id, buffer);
-    if (micBuffer) {
-      await deps.store.saveMicAudio(id, micBuffer);
-    }
 
     const meta: RecordingMeta = {
       id,
@@ -160,7 +149,7 @@ export function createApp(deps: AppDeps) {
     enqueueTranscription(deps, id);
 
     console.log(
-      `[api] recording created id=${id} bytes=${buffer.length} mic=${micBuffer?.length ?? 0} title=${meetingTitle ?? "(none)"}`,
+      `[api] recording created id=${id} bytes=${buffer.length} title=${meetingTitle ?? "(none)"}`,
     );
 
     return c.json({ id, status: meta.status }, 202);
@@ -209,6 +198,9 @@ export function createApp(deps: AppDeps) {
 
     if (isProcessingStale(meta)) {
       if (await deps.store.audioExists(id)) {
+        if (isTranscriptionActive(id)) {
+          return c.json(meta);
+        }
         enqueueTranscription(deps, id);
         return c.json({
           ...meta,

@@ -1095,7 +1095,7 @@ packages:
     resolution: {integrity: sha512-0iirZp3uVDjVGt9p49aTaqjk84TrglENEDuqfdlZQ1roC9CWlPk6Avf8EEnZNcAqPonwkG35x4n3ww/1THYAeQ==}
     engines: {node: '>= 12.20'}
 
-  fs-extra@10.1.0:
+  fs-extra@10.2.0:
     resolution: {integrity: sha512-oRXApq54ETRj4eMiFzGnHWGy+zo5raudjuxN0b8H7s/RU2oW0Wvsx9O0ACRN/kRq9E8Vu/ReskGB5o3ji+FzHQ==}
     engines: {node: '>=12'}
 
@@ -1209,7 +1209,7 @@ packages:
     resolution: {integrity: sha512-c4FRfUm/dbcWZ7U+1Wq0AwCyFL+3nt2bEw05wfxSz+DWpWsitgmSgYmy2dQdWyKC1694ELPqMs/YzUSNozLt8A==}
     engines: {node: 4.x || >=6.0.0}
     peerDependencies:
-      encoding: ^0.1.0
+      encoding: ^0.2.0
     peerDependenciesMeta:
       encoding:
         optional: true
@@ -1538,7 +1538,7 @@ snapshots:
       convert-source-map: 1.9.0
       debug: 4.4.3
       es-module-lexer: 0.10.5
-      fs-extra: 10.1.0
+      fs-extra: 10.2.0
       jsesc: 3.1.0
       magic-string: 0.30.21
       node-html-parser: 7.1.0
@@ -2290,7 +2290,7 @@ snapshots:
       node-domexception: 1.0.0
       web-streams-polyfill: 4.0.0-beta.3
 
-  fs-extra@10.1.0:
+  fs-extra@10.2.0:
     dependencies:
       graceful-fs: 4.2.11
       jsonfile: 6.2.1

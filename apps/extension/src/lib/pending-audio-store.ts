@@ -4,8 +4,6 @@ export interface PendingAudioMeta {
   startedAt: string;
   durationMs: number;
   byteLength: number;
-  micByteLength?: number;
-  micMimeType?: string;
   createdAt: string;
 }
 
@@ -29,29 +27,20 @@ function openDb(): Promise<IDBDatabase> {
 
 interface StoredPending {
   bytes: ArrayBuffer;
-  micBytes?: ArrayBuffer;
   meta: PendingAudioMeta;
 }
 
 export async function savePendingAudio(
   id: string,
   bytes: Uint8Array,
-  meta: Omit<PendingAudioMeta, "byteLength" | "micByteLength" | "createdAt"> & {
-    micBytes?: Uint8Array;
-  },
+  meta: Omit<PendingAudioMeta, "byteLength" | "createdAt">,
 ): Promise<void> {
   const db = await openDb();
-  const { micBytes, micMimeType, ...rest } = meta;
   const payload: StoredPending = {
     bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
-    micBytes: micBytes
-      ? micBytes.buffer.slice(micBytes.byteOffset, micBytes.byteOffset + micBytes.byteLength)
-      : undefined,
     meta: {
-      ...rest,
-      micMimeType: micBytes ? micMimeType ?? rest.mimeType : undefined,
+      ...meta,
       byteLength: bytes.length,
-      micByteLength: micBytes?.length,
       createdAt: new Date().toISOString(),
     },
   };
@@ -69,7 +58,7 @@ export async function savePendingAudio(
 
 export async function loadPendingAudio(
   id: string,
-): Promise<{ bytes: Uint8Array; micBytes?: Uint8Array; meta: PendingAudioMeta } | null> {
+): Promise<{ bytes: Uint8Array; meta: PendingAudioMeta } | null> {
   const db = await openDb();
   const stored = await new Promise<StoredPending | undefined>((resolve, reject) => {
     const tx = db.transaction(STORE, "readonly");
@@ -85,7 +74,6 @@ export async function loadPendingAudio(
 
   return {
     bytes: new Uint8Array(stored.bytes),
-    micBytes: stored.micBytes ? new Uint8Array(stored.micBytes) : undefined,
     meta: stored.meta,
   };
 }
@@ -103,31 +91,13 @@ export async function deletePendingAudio(id: string): Promise<void> {
   });
 }
 
-export async function downloadPendingAudio(
-  id: string,
-  filename: string,
-  track: "tab" | "mic" = "tab",
-): Promise<void> {
+export async function downloadPendingAudio(id: string, filename: string): Promise<void> {
   const pending = await loadPendingAudio(id);
   if (!pending) {
     throw new Error("Local recording not found — it may have been uploaded or cleared");
   }
 
-  const bytes = track === "mic" ? pending.micBytes : pending.bytes;
-  if (!bytes?.length) {
-    throw new Error(
-      track === "mic"
-        ? "No microphone track — allow mic in Settings and record again"
-        : "Tab audio missing from local backup",
-    );
-  }
-
-  const mimeType =
-    track === "mic"
-      ? pending.meta.micMimeType ?? pending.meta.mimeType
-      : pending.meta.mimeType;
-
-  const blob = new Blob([bytes], { type: mimeType });
+  const blob = new Blob([pending.bytes], { type: pending.meta.mimeType });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;

@@ -1,8 +1,11 @@
-import type { TranscriptResult } from "@cognium/meet-shared";
+import type { TranscriptResult, TranscriptionProgress } from "@cognium/meet-shared";
+
+export interface TranscriptionOptions {
+  language?: string;
+  meetingTitle?: string;
+  onProgress?: (progress: TranscriptionProgress) => void | Promise<void>;
+}
 
 export interface TranscriptionProvider {
-  transcribe(
-    audioPath: string,
-    opts?: { language?: string; meetingTitle?: string },
-  ): Promise<TranscriptResult>;
+  transcribe(audioPath: string, opts?: TranscriptionOptions): Promise<TranscriptResult>;
 }

@@ -5,7 +5,8 @@ export function isRetryableError(err: unknown): boolean {
   return (
     lower.includes("connection error") ||
     lower.includes("econnreset") ||
-    lower.includes("etimedout") ||
+    lower.includes("timed out") ||
+    lower.includes("timeout") ||
     lower.includes("socket hang up") ||
     lower.includes("network") ||
     lower.includes("429") ||

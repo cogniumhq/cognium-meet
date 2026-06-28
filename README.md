@@ -1,11 +1,11 @@
 # Cognium Meet
 
-Record Google Meet tab audio with a Chrome extension, transcribe via OpenAI Whisper, and save timestamped text files.
+Record Google Meet tab audio with a Chrome extension, transcribe via OpenAI **gpt-4o-transcribe-diarize**, and save timestamped text files with speaker labels.
 
 ## Architecture
 
 - **Chrome extension** (`apps/extension`) — captures Meet tab audio with `tabCapture` + offscreen `MediaRecorder`
-- **API** (`apps/api`) — accepts WebM uploads, runs Whisper, writes `transcript.txt` + `transcript.json`
+- **API** (`apps/api`) — accepts WebM uploads, runs diarized transcription, writes `transcript.txt` + `transcript.json`
 - **Shared types** (`packages/shared`) — recording metadata and transcript formatting
 
 ## Prerequisites
@@ -13,7 +13,7 @@ Record Google Meet tab audio with a Chrome extension, transcribe via OpenAI Whis
 - Node.js 20+
 - pnpm 9+
 - Chrome (stable)
-- OpenAI API key with Whisper access
+- OpenAI API key with access to `gpt-4o-transcribe-diarize` (set `TRANSCRIPTION_MODEL=whisper-1` for legacy Whisper)
 
 ## Setup
 
@@ -38,6 +38,8 @@ OPENAI_API_KEY=sk-...
 PORT=3847
 API_TOKEN=dev-token-change-me
 DELETE_AUDIO_AFTER_TRANSCRIPTION=true
+# TRANSCRIPTION_MODEL=gpt-4o-transcribe-diarize  # default
+# TRANSCRIPTION_MODEL=whisper-1                    # legacy, no speaker labels
 ```
 
 Start the API (loads `apps/api/.env` automatically):
@@ -78,7 +80,7 @@ microphone.
 
 Click **Grant microphone access** in Settings once. After that the offscreen
 recorder mixes mic + tab audio automatically. Without it, recordings contain only
-remote participants (and a solo test will be silent — Whisper returns just `you`).
+remote participants (and a solo test will be mostly silent without mic).
 
 ## Manual E2E test
 
@@ -86,11 +88,10 @@ remote participants (and a solo test will be silent — Whisper returns just `yo
 2. Open [Google Meet](https://meet.google.com) and join or start a meeting.
 3. Play audio in the meeting (speak or share a short audio clip).
 4. Click the Cognium Meet extension → **Start recording**.
-5. Confirm the red consent banner appears on the Meet page.
-6. Record for at least 30 seconds, then click **Stop & transcribe**.
-7. Wait for status **Transcript ready**.
-8. In **Recent transcripts**, click **Download TXT** and verify timestamped lines.
-9. Download JSON and confirm `segments` with `start`, `end`, and `text`.
+5. Record for at least 30 seconds, then click **Stop & transcribe**.
+6. Wait for status **Transcript ready**.
+7. In **Recent transcripts**, click **Download TXT** and verify timestamped lines with speaker labels.
+8. Download JSON and confirm `segments` with `start`, `end`, `text`, and `speaker`.
 
 ### Edge cases to verify
 
@@ -98,8 +99,8 @@ remote participants (and a solo test will be silent — Whisper returns just `yo
 |------|----------|
 | Start on non-Meet tab | Error: open a Google Meet tab |
 | Close Meet tab while recording | Recording stops; error on stop if tab gone |
-| Empty / very short recording | Upload may fail or Whisper returns minimal text |
-| Solo meeting without mic grant | Silent audio; transcript is just `you` (grant mic) |
+| Empty / very short recording | Upload may fail or transcription returns minimal text |
+| Solo meeting without mic grant | Silent audio; little or no transcript (grant mic) |
 | API down during upload | Popup shows upload error |
 
 ## API endpoints
@@ -119,8 +120,8 @@ Auth: `Authorization: Bearer <API_TOKEN>` when `API_TOKEN` is set.
 **transcript.txt**
 
 ```
-[00:00:00] Welcome everyone to the sprint review.
-[00:00:12] Let's start with the backend updates.
+[00:00:00] Speaker 1: Welcome everyone to the sprint review.
+[00:00:12] Speaker 2: Let's start with the backend updates.
 ```
 
 **transcript.json**
@@ -131,14 +132,14 @@ Auth: `Authorization: Bearer <API_TOKEN>` when `API_TOKEN` is set.
   "language": "en",
   "duration": 120.5,
   "segments": [
-    { "start": 0.0, "end": 4.2, "text": "Welcome everyone..." }
+    { "start": 0.0, "end": 4.2, "text": "Welcome everyone...", "speaker": "Speaker 1" }
   ]
 }
 ```
 
 ## Legal / consent
 
-Recording laws vary by jurisdiction. The extension shows an on-page banner while recording. You must inform all participants before recording.
+Recording laws vary by jurisdiction. You must inform all participants before recording.
 
 ## Development
 
@@ -153,6 +154,6 @@ Transcripts and metadata are stored under `storage/` (gitignored).
 ## Roadmap (not in v1)
 
 - AI summaries via `@ax-llm/ax`
-- Speaker diarization (Deepgram / pyannote)
+- Known-speaker **You** label via diarize reference clips
 - Real-time streaming captions
 - Meeting bot auto-join

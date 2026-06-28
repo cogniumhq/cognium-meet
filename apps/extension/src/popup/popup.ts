@@ -1,8 +1,9 @@
+import type { TranscriptionProgress } from "@cognium/meet-shared";
 import {
-  getHistory,
-  removeHistoryEntry,
-  updateHistoryEntry,
-} from "../lib/storage.js";
+  isTranscriptionProgressActive,
+  transcriptionProgressLabel,
+  transcriptionProgressPercent,
+} from "@cognium/meet-shared";
 import {
   deleteServerRecording,
   downloadTranscript,
@@ -10,7 +11,12 @@ import {
   pollRecording,
   retryRecording,
 } from "../lib/upload.js";
-import { deletePendingAudio, downloadPendingAudio, loadPendingAudio } from "../lib/pending-audio-store.js";
+import { deletePendingAudio, downloadPendingAudio } from "../lib/pending-audio-store.js";
+import {
+  getHistory,
+  removeHistoryEntry,
+  updateHistoryEntry,
+} from "../lib/storage.js";
 import { isRecordableTabUrl } from "../lib/recordable-tab.js";
 import { initSettingsForm } from "../lib/settings-form.js";
 
@@ -25,9 +31,19 @@ const mainView = document.getElementById("main-view") as HTMLDivElement;
 const settingsView = document.getElementById("settings-view") as HTMLDivElement;
 const settingsOpenBtn = document.getElementById("settings-open-btn") as HTMLButtonElement;
 const settingsBackBtn = document.getElementById("settings-back-btn") as HTMLButtonElement;
+const transcriptionProgress = document.getElementById(
+  "transcription-progress",
+) as HTMLDivElement;
+const progressLabel = document.getElementById("progress-label") as HTMLParagraphElement;
+const progressTrack = document.getElementById("progress-track") as HTMLDivElement;
+const progressFill = document.getElementById("progress-fill") as HTMLDivElement;
+const progressPercent = document.getElementById("progress-percent") as HTMLParagraphElement;
 
 let timerInterval: number | undefined;
+let progressTickInterval: number | undefined;
 let recordingStartedAt: number | undefined;
+let currentProgress: TranscriptionProgress | undefined;
+const activePolls = new Set<string>();
 
 void init();
 
@@ -62,6 +78,138 @@ async function init(): Promise<void> {
 
   await refreshStaleHistory();
   await renderHistory();
+  void resumeProcessingPolls();
+}
+
+async function resumeProcessingPolls(): Promise<void> {
+  const history = await getHistory();
+  for (const item of history) {
+    if (item.status === "processing" && !item.localAudioId) {
+      void pollTranscription(item.id);
+    }
+  }
+}
+
+function renderProgressUi(progress?: TranscriptionProgress): void {
+  currentProgress = progress;
+  if (!progress) {
+    transcriptionProgress.classList.add("hidden");
+    progressFill.classList.remove("progress-fill--active");
+    stopProgressTick();
+    return;
+  }
+
+  const now = Date.now();
+  const pct = transcriptionProgressPercent(progress, now);
+  const active = isTranscriptionProgressActive(progress);
+
+  transcriptionProgress.classList.remove("hidden");
+  progressLabel.textContent = transcriptionProgressLabel(progress, now);
+  progressFill.style.width = `${pct}%`;
+  progressFill.classList.toggle("progress-fill--active", active);
+  progressPercent.textContent = `${pct}%`;
+  progressTrack.setAttribute("aria-valuenow", String(pct));
+  statusText.textContent = "Transcribing…";
+  statusText.classList.remove("error");
+
+  if (active && !progressTickInterval) {
+    progressTickInterval = window.setInterval(() => {
+      if (currentProgress) {
+        renderProgressUi(currentProgress);
+      }
+    }, 1000);
+  } else if (!active) {
+    stopProgressTick();
+  }
+}
+
+function stopProgressTick(): void {
+  if (progressTickInterval) {
+    clearInterval(progressTickInterval);
+    progressTickInterval = undefined;
+  }
+}
+
+function showGlobalProgress(progress?: TranscriptionProgress): void {
+  renderProgressUi(progress);
+}
+
+function createProgressBarElement(
+  progress: TranscriptionProgress | undefined,
+): HTMLDivElement | null {
+  if (!progress) {
+    return null;
+  }
+  const now = Date.now();
+  const pct = transcriptionProgressPercent(progress, now);
+  const active = isTranscriptionProgressActive(progress);
+  const wrap = document.createElement("div");
+  wrap.className = "transcription-progress history-progress";
+
+  const label = document.createElement("p");
+  label.className = "progress-label";
+  label.textContent = transcriptionProgressLabel(progress, now);
+
+  const track = document.createElement("div");
+  track.className = "progress-track";
+  track.setAttribute("role", "progressbar");
+  track.setAttribute("aria-valuemin", "0");
+  track.setAttribute("aria-valuemax", "100");
+  track.setAttribute("aria-valuenow", String(pct));
+
+  const fill = document.createElement("div");
+  fill.className = "progress-fill";
+  if (active) {
+    fill.classList.add("progress-fill--active");
+  }
+  fill.style.width = `${pct}%`;
+  track.appendChild(fill);
+
+  const percent = document.createElement("p");
+  percent.className = "progress-percent";
+  percent.textContent = `${pct}%`;
+
+  wrap.appendChild(label);
+  wrap.appendChild(track);
+  wrap.appendChild(percent);
+  return wrap;
+}
+
+async function pollTranscription(id: string): Promise<void> {
+  if (activePolls.has(id)) {
+    return;
+  }
+  activePolls.add(id);
+  try {
+    const meta = await pollRecording(id, {
+      intervalMs: 2000,
+      timeoutMs: 90 * 60 * 1000,
+      onUpdate: (update) => {
+        showGlobalProgress(update.progress);
+        void updateHistoryEntry(id, {
+          status: update.status,
+          error: update.error,
+          progress: update.progress,
+        }).then(() => renderHistory());
+      },
+    });
+    showGlobalProgress(undefined);
+    await updateHistoryEntry(id, {
+      status: meta.status,
+      error: meta.error,
+      progress: undefined,
+    });
+    await renderHistory();
+    if (meta.status === "completed") {
+      setStatus("Transcript ready — see Recent transcripts below");
+    } else if (meta.status === "failed") {
+      setStatus(meta.error ?? "Transcription failed", true);
+    }
+  } catch {
+    showGlobalProgress(undefined);
+  } finally {
+    activePolls.delete(id);
+  }
 }
 
 function showSettings(open: boolean): void {
@@ -154,8 +302,9 @@ async function stopRecording(transcribe: boolean): Promise<void> {
     }
 
     setStatus("Transcribing… — safe to close this popup");
+    showGlobalProgress({ phase: "preparing", label: "Starting transcription…" });
 
-    void waitForTranscription(response.recordingId);
+    void pollTranscription(response.recordingId);
   } catch (err) {
     const status = await chrome.runtime.sendMessage({ type: "GET_STATUS" });
     const message = err instanceof Error ? err.message : String(err);
@@ -226,10 +375,11 @@ async function refreshStaleHistory(): Promise<void> {
     }
     try {
       const meta = await fetchRecordingStatus(item.id);
-      if (meta.status !== item.status || meta.error !== item.error) {
+      if (meta.status !== item.status || meta.error !== item.error || meta.progress) {
         await updateHistoryEntry(item.id, {
           status: meta.status,
           error: meta.error,
+          progress: meta.progress,
         });
       }
     } catch {
@@ -238,20 +388,17 @@ async function refreshStaleHistory(): Promise<void> {
   }
 }
 
-async function waitForTranscription(id: string): Promise<void> {
+async function retryTranscription(id: string): Promise<void> {
+  setStatus("Retrying transcription…");
+  showGlobalProgress({ phase: "preparing", label: "Starting transcription…" });
   try {
-    const meta = await pollRecording(id, { timeoutMs: 20 * 60 * 1000 });
-    await updateHistoryEntry(id, { status: meta.status, error: meta.error });
+    await retryRecording(id);
+    await updateHistoryEntry(id, { status: "processing", error: undefined, progress: undefined });
     await renderHistory();
-    if (meta.status === "completed") {
-      setStatus("Transcript ready — see Recent transcripts below");
-      return;
-    }
-    if (meta.status === "failed") {
-      setStatus(meta.error ?? "Transcription failed", true);
-    }
-  } catch {
-    // Background worker continues polling if popup closes.
+    void pollTranscription(id);
+  } catch (err) {
+    showGlobalProgress(undefined);
+    setStatus(err instanceof Error ? err.message : String(err), true);
   }
 }
 
@@ -268,23 +415,12 @@ async function retryUpload(localAudioId: string): Promise<void> {
     await renderHistory();
     if (response?.recordingId) {
       setStatus("Transcribing…");
-      await waitForTranscription(response.recordingId);
+      showGlobalProgress({ phase: "preparing", label: "Starting transcription…" });
+      void pollTranscription(response.recordingId);
     }
   } catch (err) {
     setStatus(err instanceof Error ? err.message : String(err), true);
     await renderHistory();
-  }
-}
-
-async function retryTranscription(id: string): Promise<void> {
-  setStatus("Retrying transcription…");
-  try {
-    await retryRecording(id);
-    await updateHistoryEntry(id, { status: "processing", error: undefined });
-    await renderHistory();
-    await waitForTranscription(id);
-  } catch (err) {
-    setStatus(err instanceof Error ? err.message : String(err), true);
   }
 }
 
@@ -352,7 +488,6 @@ function appendLocalAudioActions(
   li: HTMLLIElement,
   item: { id: string; localAudioId?: string; meetingTitle?: string },
   uploadLabel = "Retry upload",
-  hasMicTrack = false,
 ): void {
   if (!item.localAudioId) {
     return;
@@ -371,29 +506,16 @@ function appendLocalAudioActions(
   });
   links.appendChild(upload);
 
-  const tabDownload = document.createElement("button");
-  tabDownload.type = "button";
-  tabDownload.className = "link-btn";
-  tabDownload.textContent = hasMicTrack ? "Download tab" : "Download audio";
-  tabDownload.addEventListener("click", () => {
-    void downloadPendingAudio(item.localAudioId!, `${base}-tab.webm`, "tab").catch((err) =>
+  const download = document.createElement("button");
+  download.type = "button";
+  download.className = "link-btn";
+  download.textContent = "Download audio";
+  download.addEventListener("click", () => {
+    void downloadPendingAudio(item.localAudioId!, `${base}.webm`).catch((err) =>
       setStatus(err instanceof Error ? err.message : String(err), true),
     );
   });
-  links.appendChild(tabDownload);
-
-  if (hasMicTrack) {
-    const micDownload = document.createElement("button");
-    micDownload.type = "button";
-    micDownload.className = "link-btn";
-    micDownload.textContent = "Download mic";
-    micDownload.addEventListener("click", () => {
-      void downloadPendingAudio(item.localAudioId!, `${base}-mic.webm`, "mic").catch((err) =>
-        setStatus(err instanceof Error ? err.message : String(err), true),
-      );
-    });
-    links.appendChild(micDownload);
-  }
+  links.appendChild(download);
 
   const del = document.createElement("button");
   del.type = "button";
@@ -464,13 +586,11 @@ async function renderHistory(): Promise<void> {
         err.textContent = item.error;
         li.appendChild(err);
       }
-      const pending = await loadPendingAudio(item.localAudioId);
-      appendLocalAudioActions(li, item, "Retry upload", Boolean(pending?.micBytes?.length));
+      appendLocalAudioActions(li, item, "Retry upload");
     }
 
     if (item.status === "saved" && item.localAudioId) {
-      const pending = await loadPendingAudio(item.localAudioId);
-      appendLocalAudioActions(li, item, "Transcribe", Boolean(pending?.micBytes?.length));
+      appendLocalAudioActions(li, item, "Transcribe");
     }
 
     if (item.status === "failed" && !item.localAudioId) {
@@ -527,6 +647,10 @@ async function renderHistory(): Promise<void> {
     }
 
     if (item.status === "processing") {
+      const progressBar = createProgressBarElement(item.progress);
+      if (progressBar) {
+        li.appendChild(progressBar);
+      }
       appendRemoveAction(li, item);
     }
 

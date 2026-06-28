@@ -38,10 +38,6 @@ interface OffscreenStopResponse {
   audioBase64?: string;
   byteLength?: number;
   mimeType?: string;
-  micAudioBase64?: string;
-  micByteLength?: number;
-  micMimeType?: string;
-  hasMicTrack?: boolean;
   error?: string;
 }
 
@@ -338,8 +334,6 @@ async function handleCaptureEndedWithLocalAudio(message: {
       autoStoppedReason: message.reason ?? "tab_closed",
       transcribe: true,
       existingLocalAudioId: message.localAudioId,
-      micBytes: pending.micBytes,
-      micMimeType: pending.meta.micMimeType,
     });
   } finally {
     isFinalizingRecording = false;
@@ -497,8 +491,6 @@ async function stopRecordingAndFinalize(opts?: {
         autoStoppedReason: opts?.reason,
         transcribe: opts?.transcribe !== false,
         existingLocalAudioId: response.localAudioId,
-        micBytes: pending.micBytes,
-        micMimeType: pending.meta.micMimeType,
       });
     }
 
@@ -528,28 +520,6 @@ async function stopRecordingAndFinalize(opts?: {
       return { error, durationMs, meetingTitle, startedAt };
     }
 
-    let micBytes: Uint8Array | undefined;
-    if (response.micAudioBase64) {
-      micBytes = normalizeAudioBytes(response.micAudioBase64);
-      if (response.micByteLength && micBytes.length !== response.micByteLength) {
-        micBytes = undefined;
-      } else if (!isLikelyAudio(micBytes)) {
-        micBytes = undefined;
-      }
-    }
-
-    await setRecordingState({
-      isRecording: false,
-      tabId: undefined,
-      startedAt: undefined,
-      meetingTitle: undefined,
-      includedMic: undefined,
-      micLabel: undefined,
-      lastError: undefined,
-    });
-
-    await closeOffscreenDocument();
-
     return finalizeRecordingBytes(audioBytes, {
       mimeType: response.mimeType ?? "audio/webm",
       meetingTitle,
@@ -557,8 +527,6 @@ async function stopRecordingAndFinalize(opts?: {
       durationMs,
       autoStoppedReason: opts?.reason,
       transcribe: opts?.transcribe !== false,
-      micBytes,
-      micMimeType: response.micMimeType,
     });
   } finally {
     isFinalizingRecording = false;
@@ -575,8 +543,6 @@ async function finalizeRecordingBytes(
     autoStoppedReason?: "tab_closed" | "capture_ended";
     transcribe?: boolean;
     existingLocalAudioId?: string;
-    micBytes?: Uint8Array;
-    micMimeType?: string;
   },
 ): Promise<FinalizeResult> {
   const {
@@ -587,8 +553,6 @@ async function finalizeRecordingBytes(
     autoStoppedReason,
     transcribe = true,
     existingLocalAudioId,
-    micBytes,
-    micMimeType,
   } = params;
   const titleSuffix =
     autoStoppedReason === "tab_closed"
@@ -607,8 +571,6 @@ async function finalizeRecordingBytes(
       meetingTitle: displayTitle,
       startedAt: new Date(startedAt).toISOString(),
       durationMs,
-      micBytes,
-      micMimeType,
     });
   }
 
@@ -637,8 +599,6 @@ async function finalizeRecordingBytes(
     const upload = await uploadRecording({
       bytes: audioBytes,
       mimeType,
-      micBytes,
-      micMimeType,
       meetingTitle: displayTitle,
       startedAt,
       durationMs,
@@ -711,8 +671,6 @@ async function handleRetryUpload(
     const upload = await uploadRecording({
       bytes: pending.bytes,
       mimeType: pending.meta.mimeType,
-      micBytes: pending.micBytes,
-      micMimeType: pending.meta.micMimeType,
       meetingTitle: pending.meta.meetingTitle,
       startedAt: new Date(pending.meta.startedAt).getTime(),
       durationMs: pending.meta.durationMs,
@@ -929,16 +887,25 @@ async function trackTranscription(id: string): Promise<void> {
   try {
     const meta = await pollRecording(id, {
       intervalMs: 3000,
-      timeoutMs: 20 * 60 * 1000,
+      timeoutMs: 90 * 60 * 1000,
+      onUpdate: (update) => {
+        void updateHistoryEntry(id, {
+          status: update.status,
+          error: update.error,
+          progress: update.progress,
+        });
+      },
     });
     await updateHistoryEntry(id, {
       status: meta.status,
       error: meta.error,
+      progress: undefined,
     });
   } catch (err) {
     await updateHistoryEntry(id, {
       status: "failed",
       error: err instanceof Error ? err.message : String(err),
+      progress: undefined,
     });
   }
 }

@@ -3,6 +3,7 @@ import { serve } from "@hono/node-server";
 import { join } from "node:path";
 import { createApp } from "./app.js";
 import { resumePendingRecordings } from "./transcription/process-recording.js";
+import { OpenAIDiarizeProvider } from "./transcription/openai-diarize.js";
 import { OpenAIWhisperProvider } from "./transcription/openai-whisper.js";
 import { RecordingStore } from "./storage/recording-store.js";
 
@@ -19,7 +20,11 @@ if (!openaiKey) {
 const store = new RecordingStore(storageDir);
 await store.ensureReady();
 
-const transcription = new OpenAIWhisperProvider(openaiKey);
+const transcriptionModel = process.env.TRANSCRIPTION_MODEL ?? "gpt-4o-transcribe-diarize";
+const transcription =
+  transcriptionModel === "whisper-1"
+    ? new OpenAIWhisperProvider(openaiKey)
+    : new OpenAIDiarizeProvider(openaiKey);
 const deleteAudioAfterTranscription =
   process.env.DELETE_AUDIO_AFTER_TRANSCRIPTION !== "false";
 
@@ -42,4 +47,5 @@ void resumePendingRecordings(deps);
 
 serve({ fetch: app.fetch, port }, () => {
   console.log(`cognium-meet API listening on http://localhost:${port}`);
+  console.log(`Transcription model: ${transcriptionModel}`);
 });

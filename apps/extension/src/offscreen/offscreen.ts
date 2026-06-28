@@ -3,18 +3,12 @@ import { listAudioInputDevices, micTrackLabel, openMicStream } from "../lib/audi
 import { isOffscreenMessage } from "../lib/messages.js";
 import { savePendingAudio } from "../lib/pending-audio-store.js";
 
-interface DualTrackBlobs {
-  tab: Blob;
-  mic?: Blob;
-}
-
 interface TrackRecorder {
   recorder: MediaRecorder;
   chunks: Blob[];
 }
 
-let tabRecorder: TrackRecorder | null = null;
-let micRecorder: TrackRecorder | null = null;
+let recorder: TrackRecorder | null = null;
 let tabStream: MediaStream | null = null;
 let micStream: MediaStream | null = null;
 let audioContext: AudioContext | null = null;
@@ -22,8 +16,8 @@ let includedMic = false;
 let micLabel: string | undefined;
 let isRecording = false;
 let captureFlushPromise: Promise<void> | null = null;
-let activeStopPromise: Promise<DualTrackBlobs> | null = null;
-let lastStoppedBlobs: DualTrackBlobs | null = null;
+let activeStopPromise: Promise<Blob> | null = null;
+let lastStoppedBlob: Blob | null = null;
 let recordingMeta: { meetingTitle?: string; startedAt: number } | null = null;
 
 const PREFERRED_MIME = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
@@ -36,7 +30,7 @@ async function flushRecordingOnCaptureEnd(
   if (captureFlushPromise) {
     return captureFlushPromise;
   }
-  if (!isRecording && !lastStoppedBlobs) {
+  if (!isRecording && !lastStoppedBlob) {
     return;
   }
 
@@ -52,35 +46,26 @@ async function saveStoppedRecordingToLocal(): Promise<{
   localAudioId: string;
   mimeType: string;
   byteLength: number;
-  hasMicTrack: boolean;
 }> {
-  const blobs = await stopRecording();
-  const tabBytes = await blobToBytes(blobs.tab);
-  const mimeType = blobs.tab.type || "audio/webm";
+  const blob = await stopRecording();
+  const bytes = await blobToBytes(blob);
+  const mimeType = blob.type || "audio/webm";
   const startedAt = recordingMeta?.startedAt ?? Date.now();
   const durationMs = Date.now() - startedAt;
   const meetingTitle = recordingMeta?.meetingTitle;
 
-  let micBytes: Uint8Array | undefined;
-  if (blobs.mic && blobs.mic.size > 0) {
-    micBytes = await blobToBytes(blobs.mic);
-  }
-
   const localAudioId = crypto.randomUUID();
-  await savePendingAudio(localAudioId, tabBytes, {
+  await savePendingAudio(localAudioId, bytes, {
     mimeType,
     meetingTitle,
     startedAt: new Date(startedAt).toISOString(),
     durationMs,
-    micBytes,
-    micMimeType: blobs.mic?.type || mimeType,
   });
 
   return {
     localAudioId,
     mimeType,
-    byteLength: tabBytes.length,
-    hasMicTrack: Boolean(micBytes?.length),
+    byteLength: bytes.length,
   };
 }
 
@@ -95,7 +80,6 @@ async function doFlushRecordingOnCaptureEnd(
       localAudioId: saved.localAudioId,
       mimeType: saved.mimeType,
       byteLength: saved.byteLength,
-      hasMicTrack: saved.hasMicTrack,
     });
   } catch (err) {
     await chrome.runtime.sendMessage({
@@ -170,7 +154,6 @@ async function handleMessage(
         localAudioId: saved.localAudioId,
         mimeType: saved.mimeType,
         byteLength: saved.byteLength,
-        hasMicTrack: saved.hasMicTrack,
       });
       return;
     }
@@ -214,7 +197,6 @@ async function startRecording(
   includedMic = false;
   micLabel = undefined;
   micStream = null;
-  micRecorder = null;
 
   const wantsMic = Boolean(micDeviceId);
   try {
@@ -232,8 +214,15 @@ async function startRecording(
   }
 
   audioContext = new AudioContext();
+  const mixDestination = audioContext.createMediaStreamDestination();
   const tabSource = audioContext.createMediaStreamSource(tabStream);
   tabSource.connect(audioContext.destination);
+  tabSource.connect(mixDestination);
+
+  if (micStream) {
+    const micSource = audioContext.createMediaStreamSource(micStream);
+    micSource.connect(mixDestination);
+  }
 
   for (const track of tabStream.getAudioTracks()) {
     track.addEventListener(
@@ -245,38 +234,33 @@ async function startRecording(
     );
   }
 
-  lastStoppedBlobs = null;
-  tabRecorder = createTrackRecorder(tabStream);
-
-  if (micStream) {
-    micRecorder = createTrackRecorder(micStream);
-  }
-
+  lastStoppedBlob = null;
+  recorder = createTrackRecorder(mixDestination.stream);
   isRecording = true;
 }
 
 function createTrackRecorder(stream: MediaStream): TrackRecorder {
   const chunks: Blob[] = [];
-  const recorder = new MediaRecorder(stream, { mimeType: PREFERRED_MIME });
-  recorder.ondataavailable = (event) => {
+  const mediaRecorder = new MediaRecorder(stream, { mimeType: PREFERRED_MIME });
+  mediaRecorder.ondataavailable = (event) => {
     if (event.data.size > 0) {
       chunks.push(event.data);
     }
   };
-  recorder.start(1000);
-  return { recorder, chunks };
+  mediaRecorder.start(1000);
+  return { recorder: mediaRecorder, chunks };
 }
 
-async function stopRecording(): Promise<DualTrackBlobs> {
-  if (lastStoppedBlobs) {
-    return lastStoppedBlobs;
+async function stopRecording(): Promise<Blob> {
+  if (lastStoppedBlob) {
+    return lastStoppedBlob;
   }
 
   if (activeStopPromise) {
     return activeStopPromise;
   }
 
-  if (!tabRecorder || tabRecorder.recorder.state === "inactive") {
+  if (!recorder || recorder.recorder.state === "inactive") {
     throw new Error("No active recording");
   }
 
@@ -289,58 +273,53 @@ async function stopRecording(): Promise<DualTrackBlobs> {
 }
 
 async function stopTrackRecorder(track: TrackRecorder): Promise<Blob | undefined> {
-  const { recorder, chunks } = track;
-  if (recorder.state === "inactive") {
+  const { recorder: mediaRecorder, chunks } = track;
+  if (mediaRecorder.state === "inactive") {
     return undefined;
   }
 
-  if (recorder.state === "recording") {
-    recorder.requestData();
+  if (mediaRecorder.state === "recording") {
+    mediaRecorder.requestData();
   }
 
   const blob = await new Promise<Blob>((resolve, reject) => {
-    recorder.onstop = () => {
-      const result = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+    mediaRecorder.onstop = () => {
+      const result = new Blob(chunks, { type: mediaRecorder.mimeType || "audio/webm" });
       resolve(result);
     };
-    recorder.onerror = () => reject(new Error("MediaRecorder error"));
-    recorder.stop();
+    mediaRecorder.onerror = () => reject(new Error("MediaRecorder error"));
+    mediaRecorder.stop();
   });
 
   return blob.size > 0 ? blob : undefined;
 }
 
-async function doStopRecording(): Promise<DualTrackBlobs> {
-  const tabBlob = await stopTrackRecorder(tabRecorder!);
-  const micBlob = micRecorder ? await stopTrackRecorder(micRecorder) : undefined;
+async function doStopRecording(): Promise<Blob> {
+  const blob = await stopTrackRecorder(recorder!);
 
   cleanupStreams();
-  tabRecorder = null;
-  micRecorder = null;
+  recorder = null;
   isRecording = false;
 
-  if (!tabBlob) {
-    lastStoppedBlobs = null;
+  if (!blob) {
+    lastStoppedBlob = null;
     throw new Error("Recording is empty");
   }
 
-  lastStoppedBlobs = { tab: tabBlob, mic: micBlob };
-  return lastStoppedBlobs;
+  lastStoppedBlob = blob;
+  return lastStoppedBlob;
 }
 
 function abortRecording(): void {
-  for (const track of [tabRecorder, micRecorder]) {
-    if (track && track.recorder.state !== "inactive") {
-      try {
-        track.recorder.stop();
-      } catch {
-        // ignore
-      }
+  if (recorder && recorder.recorder.state !== "inactive") {
+    try {
+      recorder.recorder.stop();
+    } catch {
+      // ignore
     }
   }
-  tabRecorder = null;
-  micRecorder = null;
-  lastStoppedBlobs = null;
+  recorder = null;
+  lastStoppedBlob = null;
   activeStopPromise = null;
   captureFlushPromise = null;
   recordingMeta = null;
