@@ -1,4 +1,4 @@
-import { blobToBytes, bytesToBase64 } from "../lib/audio-bytes.js";
+import { blobToBytes } from "../lib/audio-bytes.js";
 import { listAudioInputDevices, micTrackLabel, openMicStream } from "../lib/audio-devices.js";
 import { isOffscreenMessage } from "../lib/messages.js";
 import { savePendingAudio } from "../lib/pending-audio-store.js";
@@ -48,39 +48,54 @@ async function flushRecordingOnCaptureEnd(
   }
 }
 
+async function saveStoppedRecordingToLocal(): Promise<{
+  localAudioId: string;
+  mimeType: string;
+  byteLength: number;
+  hasMicTrack: boolean;
+}> {
+  const blobs = await stopRecording();
+  const tabBytes = await blobToBytes(blobs.tab);
+  const mimeType = blobs.tab.type || "audio/webm";
+  const startedAt = recordingMeta?.startedAt ?? Date.now();
+  const durationMs = Date.now() - startedAt;
+  const meetingTitle = recordingMeta?.meetingTitle;
+
+  let micBytes: Uint8Array | undefined;
+  if (blobs.mic && blobs.mic.size > 0) {
+    micBytes = await blobToBytes(blobs.mic);
+  }
+
+  const localAudioId = crypto.randomUUID();
+  await savePendingAudio(localAudioId, tabBytes, {
+    mimeType,
+    meetingTitle,
+    startedAt: new Date(startedAt).toISOString(),
+    durationMs,
+    micBytes,
+    micMimeType: blobs.mic?.type || mimeType,
+  });
+
+  return {
+    localAudioId,
+    mimeType,
+    byteLength: tabBytes.length,
+    hasMicTrack: Boolean(micBytes?.length),
+  };
+}
+
 async function doFlushRecordingOnCaptureEnd(
   reason: "tab_closed" | "capture_ended",
 ): Promise<void> {
   try {
-    const blobs = await stopRecording();
-    const tabBytes = await blobToBytes(blobs.tab);
-    const mimeType = blobs.tab.type || "audio/webm";
-    const startedAt = recordingMeta?.startedAt ?? Date.now();
-    const durationMs = Date.now() - startedAt;
-    const meetingTitle = recordingMeta?.meetingTitle;
-
-    let micBytes: Uint8Array | undefined;
-    if (blobs.mic && blobs.mic.size > 0) {
-      micBytes = await blobToBytes(blobs.mic);
-    }
-
-    const localAudioId = crypto.randomUUID();
-    await savePendingAudio(localAudioId, tabBytes, {
-      mimeType,
-      meetingTitle,
-      startedAt: new Date(startedAt).toISOString(),
-      durationMs,
-      micBytes,
-      micMimeType: blobs.mic?.type || mimeType,
-    });
-
+    const saved = await saveStoppedRecordingToLocal();
     await chrome.runtime.sendMessage({
       type: "CAPTURE_ENDED_WITH_LOCAL_AUDIO",
       reason,
-      localAudioId,
-      mimeType,
-      byteLength: tabBytes.length,
-      hasMicTrack: Boolean(micBytes?.length),
+      localAudioId: saved.localAudioId,
+      mimeType: saved.mimeType,
+      byteLength: saved.byteLength,
+      hasMicTrack: saved.hasMicTrack,
     });
   } catch (err) {
     await chrome.runtime.sendMessage({
@@ -149,24 +164,13 @@ async function handleMessage(
     }
 
     if (message.type === "OFFSCREEN_STOP") {
-      const blobs = await stopRecording();
-      const tabBytes = await blobToBytes(blobs.tab);
-      let micAudioBase64: string | undefined;
-      let micByteLength: number | undefined;
-      if (blobs.mic && blobs.mic.size > 0) {
-        const micBytes = await blobToBytes(blobs.mic);
-        micAudioBase64 = bytesToBase64(micBytes);
-        micByteLength = micBytes.length;
-      }
+      const saved = await saveStoppedRecordingToLocal();
       sendResponse({
         type: "RECORDING_STOPPED",
-        audioBase64: bytesToBase64(tabBytes),
-        mimeType: blobs.tab.type || "audio/webm",
-        byteLength: tabBytes.length,
-        micAudioBase64,
-        micMimeType: blobs.mic?.type || blobs.tab.type || "audio/webm",
-        micByteLength,
-        hasMicTrack: Boolean(micAudioBase64),
+        localAudioId: saved.localAudioId,
+        mimeType: saved.mimeType,
+        byteLength: saved.byteLength,
+        hasMicTrack: saved.hasMicTrack,
       });
       return;
     }

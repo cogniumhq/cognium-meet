@@ -117,7 +117,7 @@ async function startRecording(): Promise<void> {
 async function stopRecording(transcribe: boolean): Promise<void> {
   stopOnlyBtn.disabled = true;
   stopBtn.disabled = true;
-  setStatus(transcribe ? "Stopping & transcribing…" : "Stopping recording…");
+  setStatus(transcribe ? "Stopping & transcribing… (may take a minute for long recordings)" : "Stopping recording… (may take a minute for long recordings)");
 
   try {
     const response = await chrome.runtime.sendMessage({
@@ -157,8 +157,16 @@ async function stopRecording(transcribe: boolean): Promise<void> {
 
     void waitForTranscription(response.recordingId);
   } catch (err) {
-    exitRecordingUi();
-    setStatus(err instanceof Error ? err.message : String(err), true);
+    const status = await chrome.runtime.sendMessage({ type: "GET_STATUS" });
+    const message = err instanceof Error ? err.message : String(err);
+    if (status?.isRecording && status.startedAt) {
+      enterRecordingUi(status.startedAt);
+      const micNote = recordingMicNote(status);
+      setStatus(`Still recording (${micNote}) — ${message}`, true);
+    } else {
+      exitRecordingUi();
+      setStatus(message, true);
+    }
   } finally {
     startBtn.disabled = false;
     stopOnlyBtn.disabled = false;

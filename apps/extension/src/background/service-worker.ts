@@ -34,6 +34,7 @@ let isFinalizingRecording = false;
 
 interface OffscreenStopResponse {
   type: string;
+  localAudioId?: string;
   audioBase64?: string;
   byteLength?: number;
   mimeType?: string;
@@ -351,7 +352,13 @@ async function handleStopRecording(
 ): Promise<void> {
   const result = await stopRecordingAndFinalize({ transcribe });
   if (!result) {
-    sendResponse({ type: "RECORDING_ERROR", error: "Not recording" });
+    const still = await loadRecordingState();
+    sendResponse({
+      type: "RECORDING_ERROR",
+      error: still.isRecording
+        ? "Stop in progress or timed out — wait a moment and try again"
+        : "Not recording",
+    });
     return;
   }
 
@@ -433,28 +440,69 @@ async function stopRecordingAndFinalize(opts?: {
       };
     } else {
       try {
-        response = await sendToOffscreen<OffscreenStopResponse>({
-          type: "OFFSCREEN_STOP",
-        });
+        response = await sendToOffscreen<OffscreenStopResponse>(
+          { type: "OFFSCREEN_STOP" },
+          { timeoutMs: 15 * 60 * 1000, intervalMs: 500 },
+        );
       } catch {
-        // Offscreen may be flushing audio after tab close — wait before giving up.
-        await sleep(2500);
+        // Offscreen may still be assembling a long recording — wait before retry.
+        await sleep(5000);
         const afterFlush = await loadRecordingState();
         if (!afterFlush.isRecording) {
           return null;
         }
         try {
-          response = await sendToOffscreen<OffscreenStopResponse>({
-            type: "OFFSCREEN_STOP",
-          });
-        } catch {
-          await forceReleaseCapture();
+          response = await sendToOffscreen<OffscreenStopResponse>(
+            { type: "OFFSCREEN_STOP" },
+            { timeoutMs: 15 * 60 * 1000, intervalMs: 500 },
+          );
+        } catch (err) {
+          console.error("[recording] stop timed out", err);
           return null;
         }
       }
     }
 
-    if (response.type === "RECORDING_ERROR" || !response.audioBase64) {
+    if (response.type === "RECORDING_ERROR") {
+      const error = response.error ?? "Failed to stop recording";
+      await setRecordingState({ isRecording: true, lastError: error });
+      return { error, durationMs, meetingTitle, startedAt };
+    }
+
+    if (response.localAudioId) {
+      const pending = await loadPendingAudio(response.localAudioId);
+      if (!pending) {
+        const error = "Recording saved in offscreen but missing from local storage";
+        await setRecordingState({ isRecording: true, lastError: error });
+        return { error, durationMs, meetingTitle, startedAt };
+      }
+
+      await setRecordingState({
+        isRecording: false,
+        tabId: undefined,
+        startedAt: undefined,
+        meetingTitle: undefined,
+        includedMic: undefined,
+        micLabel: undefined,
+        lastError: undefined,
+      });
+
+      await closeOffscreenDocument();
+
+      return finalizeRecordingBytes(pending.bytes, {
+        mimeType: pending.meta.mimeType ?? response.mimeType ?? "audio/webm",
+        meetingTitle,
+        startedAt,
+        durationMs,
+        autoStoppedReason: opts?.reason,
+        transcribe: opts?.transcribe !== false,
+        existingLocalAudioId: response.localAudioId,
+        micBytes: pending.micBytes,
+        micMimeType: pending.meta.micMimeType,
+      });
+    }
+
+    if (!response.audioBase64) {
       const error =
         response.error ??
         (opts?.reason === "tab_closed"
@@ -807,26 +855,31 @@ function getTabStreamId(tabId: number): Promise<string> {
   });
 }
 
-async function sendToOffscreen<T>(message: {
-  type: string;
-  streamId?: string;
-  micDeviceId?: string;
-  meetingTitle?: string;
-  startedAt?: number;
-  reason?: "tab_closed" | "capture_ended";
-}): Promise<T> {
+async function sendToOffscreen<T>(
+  message: {
+    type: string;
+    streamId?: string;
+    micDeviceId?: string;
+    meetingTitle?: string;
+    startedAt?: number;
+    reason?: "tab_closed" | "capture_ended";
+  },
+  opts?: { timeoutMs?: number; intervalMs?: number },
+): Promise<T> {
   const payload = { ...message, target: OFFSCREEN_TARGET };
+  const intervalMs = opts?.intervalMs ?? 100;
+  const maxAttempts = Math.ceil((opts?.timeoutMs ?? 2000) / intervalMs);
 
-  for (let attempt = 0; attempt < 20; attempt++) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
       const response = await chrome.runtime.sendMessage(payload);
       if (response !== undefined) {
         return response as T;
       }
     } catch {
-      // Offscreen document may still be loading.
+      // Offscreen document may still be loading or busy finalizing audio.
     }
-    await sleep(100);
+    await sleep(intervalMs);
   }
 
   throw new Error("Offscreen recorder not ready");
