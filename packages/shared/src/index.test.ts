@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatTimestamp,
+  parseTranscriptionModel,
   segmentsToPlainText,
   transcriptionProgressLabel,
   transcriptionProgressPercent,
@@ -108,6 +109,16 @@ describe("transcriptionProgressLabel", () => {
     );
     expect(label).toContain("part 1/2");
     expect(label).toContain("of 22 min");
+  });
+});
+
+describe("parseTranscriptionModel", () => {
+  it("accepts known models and falls back otherwise", () => {
+    expect(parseTranscriptionModel("whisper-1")).toBe("whisper-1");
+    expect(parseTranscriptionModel("gpt-4o-transcribe-diarize")).toBe(
+      "gpt-4o-transcribe-diarize",
+    );
+    expect(parseTranscriptionModel("invalid", "whisper-1")).toBe("whisper-1");
   });
 });
 

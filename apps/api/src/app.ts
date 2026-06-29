@@ -3,7 +3,7 @@ import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
 import { v4 as uuidv4 } from "uuid";
 import type { RecordingMeta } from "@cognium/meet-shared";
-import type { TranscriptionProvider } from "./transcription/provider.js";
+import { parseTranscriptionModel } from "@cognium/meet-shared";
 import { RecordingStore } from "./storage/recording-store.js";
 import { isLikelyAudio } from "./transcription/prepare-audio.js";
 import {
@@ -18,7 +18,6 @@ import {
 import { requestLog } from "./middleware/request-log.js";
 
 interface AppDeps extends ProcessingDeps {
-  transcription: TranscriptionProvider;
   apiToken?: string;
   maxUploadBytes?: number;
 }
@@ -76,6 +75,7 @@ export function createApp(deps: AppDeps) {
     let meetingTitle: string | undefined;
     let startedAt: string;
     let durationMs: number | undefined;
+    let transcriptionModel = deps.defaultTranscriptionModel;
 
     if (contentType.includes("multipart/form-data")) {
       const form = await c.req.parseBody();
@@ -95,6 +95,10 @@ export function createApp(deps: AppDeps) {
         typeof form.durationMs === "string"
           ? Number.parseInt(form.durationMs, 10)
           : undefined;
+      transcriptionModel = parseTranscriptionModel(
+        form.transcriptionModel,
+        deps.defaultTranscriptionModel,
+      );
 
       buffer = Buffer.from(await audio.arrayBuffer());
     } else {
@@ -103,6 +107,7 @@ export function createApp(deps: AppDeps) {
         meetingTitle?: string;
         startedAt?: string;
         durationMs?: number;
+        transcriptionModel?: string;
       };
       try {
         body = await c.req.json();
@@ -121,6 +126,10 @@ export function createApp(deps: AppDeps) {
       meetingTitle = body.meetingTitle;
       startedAt = body.startedAt ?? new Date().toISOString();
       durationMs = body.durationMs;
+      transcriptionModel = parseTranscriptionModel(
+        body.transcriptionModel,
+        deps.defaultTranscriptionModel,
+      );
     }
 
     if (!isLikelyAudio(buffer)) {
@@ -142,6 +151,7 @@ export function createApp(deps: AppDeps) {
       startedAt,
       durationMs: Number.isFinite(durationMs) ? durationMs : undefined,
       status: "processing",
+      transcriptionModel,
       processingStartedAt: new Date().toISOString(),
     };
     await deps.store.saveMeta(meta);
@@ -149,7 +159,7 @@ export function createApp(deps: AppDeps) {
     enqueueTranscription(deps, id);
 
     console.log(
-      `[api] recording created id=${id} bytes=${buffer.length} title=${meetingTitle ?? "(none)"}`,
+      `[api] recording created id=${id} bytes=${buffer.length} model=${transcriptionModel} title=${meetingTitle ?? "(none)"}`,
     );
 
     return c.json({ id, status: meta.status }, 202);
@@ -177,15 +187,29 @@ export function createApp(deps: AppDeps) {
       );
     }
 
+    let retryModel = meta.transcriptionModel ?? deps.defaultTranscriptionModel;
+    try {
+      const body = await c.req.json<{ transcriptionModel?: string }>();
+      if (body.transcriptionModel) {
+        retryModel = parseTranscriptionModel(
+          body.transcriptionModel,
+          deps.defaultTranscriptionModel,
+        );
+      }
+    } catch {
+      // empty body is fine — use stored model
+    }
+
     await deps.store.saveMeta({
       ...meta,
       status: "processing",
       error: undefined,
+      transcriptionModel: retryModel,
       processingStartedAt: new Date().toISOString(),
     });
 
     enqueueTranscription(deps, id);
-    console.log(`[api] transcription retry id=${id}`);
+    console.log(`[api] transcription retry id=${id} model=${retryModel}`);
     return c.json({ id, status: "processing" }, 202);
   });
 

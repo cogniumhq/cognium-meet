@@ -1,5 +1,11 @@
 import { listAudioInputDevices } from "./audio-devices.js";
 import { getSettings, saveSettings } from "./storage.js";
+import {
+  DEFAULT_TRANSCRIPTION_MODEL,
+  TRANSCRIPTION_MODELS,
+  transcriptionModelLabel,
+  type TranscriptionModel,
+} from "@cognium/meet-shared";
 
 export interface SettingsFormElements {
   apiUrlInput: HTMLInputElement;
@@ -11,6 +17,7 @@ export interface SettingsFormElements {
   micBtn: HTMLButtonElement;
   micDeviceSelect: HTMLSelectElement;
   micHint: HTMLElement;
+  transcriptionModelSelect: HTMLSelectElement;
 }
 
 export function getSettingsFormElements(root: ParentNode): SettingsFormElements {
@@ -24,6 +31,9 @@ export function getSettingsFormElements(root: ParentNode): SettingsFormElements 
     micBtn: root.querySelector("#mic-btn") as HTMLButtonElement,
     micDeviceSelect: root.querySelector("#mic-device") as HTMLSelectElement,
     micHint: root.querySelector("#mic-hint") as HTMLElement,
+    transcriptionModelSelect: root.querySelector(
+      "#transcription-model",
+    ) as HTMLSelectElement,
   };
 }
 
@@ -33,6 +43,7 @@ export async function initSettingsForm(root: ParentNode): Promise<void> {
 
   els.apiUrlInput.value = settings.apiUrl;
   els.apiTokenInput.value = settings.apiToken;
+  populateTranscriptionModels(els, settings.transcriptionModel);
 
   els.tokenToggleBtn.addEventListener("click", () => {
     const showing = els.apiTokenInput.type === "text";
@@ -44,6 +55,9 @@ export async function initSettingsForm(root: ParentNode): Promise<void> {
   els.saveBtn.addEventListener("click", () => void saveApiSettings(els));
   els.micBtn.addEventListener("click", () => void requestMic(els));
   els.micDeviceSelect.addEventListener("change", () => void saveMicDevice(els));
+  els.transcriptionModelSelect.addEventListener("change", () =>
+    void saveTranscriptionModel(els),
+  );
 
   const hasMic = await refreshMicPermission(els);
   if (hasMic) {
@@ -153,11 +167,38 @@ async function saveMicDevice(els: SettingsFormElements): Promise<void> {
   setSaveStatus(els, "Microphone device saved.", false);
 }
 
+function populateTranscriptionModels(
+  els: SettingsFormElements,
+  selected?: TranscriptionModel,
+): void {
+  els.transcriptionModelSelect.innerHTML = "";
+  for (const model of TRANSCRIPTION_MODELS) {
+    const option = document.createElement("option");
+    option.value = model;
+    option.textContent = transcriptionModelLabel(model);
+    els.transcriptionModelSelect.appendChild(option);
+  }
+  els.transcriptionModelSelect.value = selected ?? DEFAULT_TRANSCRIPTION_MODEL;
+}
+
+async function saveTranscriptionModel(els: SettingsFormElements): Promise<void> {
+  const settings = await getSettings();
+  const model = els.transcriptionModelSelect.value as TranscriptionModel;
+  await saveSettings({
+    ...settings,
+    transcriptionModel: model,
+  });
+  setSaveStatus(els, "Transcription model saved.", false);
+}
+
 async function saveApiSettings(els: SettingsFormElements): Promise<void> {
   const settings = await getSettings();
   await saveSettings({
     apiUrl: els.apiUrlInput.value.replace(/\/$/, ""),
     apiToken: els.apiTokenInput.value,
+    transcriptionModel:
+      (els.transcriptionModelSelect.value as TranscriptionModel) ||
+      settings.transcriptionModel,
     microphoneDeviceId: els.micDeviceSelect.disabled
       ? settings.microphoneDeviceId
       : els.micDeviceSelect.value || undefined,

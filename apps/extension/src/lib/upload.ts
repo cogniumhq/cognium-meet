@@ -1,4 +1,5 @@
 import type { RecordingMeta } from "@cognium/meet-shared";
+import { DEFAULT_TRANSCRIPTION_MODEL } from "@cognium/meet-shared";
 import { isLikelyAudio } from "./audio-bytes.js";
 import { getSettings } from "./storage.js";
 
@@ -37,6 +38,10 @@ export async function uploadRecording(params: {
   }
   form.append("startedAt", new Date(params.startedAt).toISOString());
   form.append("durationMs", String(params.durationMs));
+  form.append(
+    "transcriptionModel",
+    settings.transcriptionModel ?? DEFAULT_TRANSCRIPTION_MODEL,
+  );
 
   const response = await fetch(`${settings.apiUrl}/v1/recordings`, {
     method: "POST",
@@ -80,6 +85,9 @@ export async function retryRecording(id: string): Promise<RecordingMeta> {
   const response = await fetch(`${settings.apiUrl}/v1/recordings/${id}/retry`, {
     method: "POST",
     headers,
+    body: JSON.stringify({
+      transcriptionModel: settings.transcriptionModel ?? DEFAULT_TRANSCRIPTION_MODEL,
+    }),
   });
   if (!response.ok) {
     const text = await response.text();

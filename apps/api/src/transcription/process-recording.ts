@@ -1,4 +1,5 @@
-import type { RecordingMeta, TranscriptionProgress } from "@cognium/meet-shared";
+import type { RecordingMeta, TranscriptionModel } from "@cognium/meet-shared";
+import { parseTranscriptionModel } from "@cognium/meet-shared";
 import type { TranscriptionProvider } from "./provider.js";
 import { RecordingStore } from "../storage/recording-store.js";
 
@@ -22,7 +23,8 @@ async function saveProgress(
 
 export interface ProcessingDeps {
   store: RecordingStore;
-  transcription: TranscriptionProvider;
+  getTranscriptionProvider: (model: TranscriptionModel) => TranscriptionProvider;
+  defaultTranscriptionModel: TranscriptionModel;
   deleteAudioAfterTranscription: boolean;
 }
 
@@ -50,16 +52,23 @@ export async function processRecording(
     throw new Error("Audio file missing — cannot transcribe");
   }
 
+  const model =
+    meta.transcriptionModel ?? deps.defaultTranscriptionModel;
+  const transcription = deps.getTranscriptionProvider(model);
+
   await deps.store.saveMeta({
     ...meta,
     status: "processing",
     error: undefined,
     processingStartedAt: new Date().toISOString(),
+    transcriptionModel: model,
   });
 
-  console.log(`[transcription] started id=${id} title=${meta.meetingTitle ?? "(none)"}`);
+  console.log(
+    `[transcription] started id=${id} model=${model} title=${meta.meetingTitle ?? "(none)"}`,
+  );
 
-  const result = await deps.transcription.transcribe(deps.store.audioPath(id), {
+  const result = await transcription.transcribe(deps.store.audioPath(id), {
     meetingTitle: meta.meetingTitle,
     onProgress: (progress) => saveProgress(deps.store, id, progress),
   });
@@ -77,12 +86,13 @@ export async function processRecording(
   await deps.store.saveTranscript(id, result);
 
   const completed: RecordingMeta = {
-    ...meta,
+    ...stillExists,
     status: "completed",
     language: result.language,
     error: undefined,
     processingStartedAt: undefined,
     progress: undefined,
+    transcriptionModel: model,
   };
   await deps.store.saveMeta(completed);
 

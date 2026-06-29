@@ -1,11 +1,12 @@
 import type { ExtensionSettings, TranscriptionProgress } from "@cognium/meet-shared";
-import { DEFAULT_API_URL } from "@cognium/meet-shared";
+import { DEFAULT_API_URL, DEFAULT_TRANSCRIPTION_MODEL } from "@cognium/meet-shared";
 
 const SETTINGS_KEY = "settings";
 
 const DEFAULT_SETTINGS: ExtensionSettings = {
   apiUrl: DEFAULT_API_URL,
   apiToken: "dev-token-change-me",
+  transcriptionModel: DEFAULT_TRANSCRIPTION_MODEL,
 };
 
 export async function getSettings(): Promise<ExtensionSettings> {

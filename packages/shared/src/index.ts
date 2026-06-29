@@ -47,14 +47,52 @@ export interface RecordingMeta {
   status: RecordingStatus;
   error?: string;
   language?: string;
+  /** OpenAI model used for this recording (set at upload; used on retry/resume). */
+  transcriptionModel?: TranscriptionModel;
   processingStartedAt?: string;
   /** Present while status is processing */
   progress?: TranscriptionProgress;
 }
 
+export const TRANSCRIPTION_MODELS = [
+  "gpt-4o-transcribe-diarize",
+  "whisper-1",
+] as const;
+
+export type TranscriptionModel = (typeof TRANSCRIPTION_MODELS)[number];
+
+export const DEFAULT_TRANSCRIPTION_MODEL: TranscriptionModel =
+  "gpt-4o-transcribe-diarize";
+
+export function parseTranscriptionModel(
+  value: unknown,
+  fallback: TranscriptionModel = DEFAULT_TRANSCRIPTION_MODEL,
+): TranscriptionModel {
+  return value === "whisper-1" || value === "gpt-4o-transcribe-diarize"
+    ? value
+    : fallback;
+}
+
+export function transcriptionModelLabel(model: TranscriptionModel): string {
+  switch (model) {
+    case "whisper-1":
+      return "Whisper (fast, no speaker labels)";
+    case "gpt-4o-transcribe-diarize":
+      return "Diarize (speaker labels, slower)";
+  }
+}
+
+export function transcriptionModelToProfile(
+  model: TranscriptionModel,
+): TranscriptionProfile {
+  return model === "whisper-1" ? "whisper" : "diarize";
+}
+
 export interface ExtensionSettings {
   apiUrl: string;
   apiToken: string;
+  /** OpenAI transcription model sent with each upload */
+  transcriptionModel?: TranscriptionModel;
   /** Chrome media deviceId for audioinput; empty = Chrome default */
   microphoneDeviceId?: string;
 }
