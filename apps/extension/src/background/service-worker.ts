@@ -221,6 +221,7 @@ async function handleStartRecording(
       type: "OFFSCREEN_START",
       streamId,
       micDeviceId,
+      captureMode: settings.captureMode ?? "mixed",
       meetingTitle: message.meetingTitle ?? recordingTitle,
       startedAt,
     });
@@ -328,6 +329,8 @@ async function handleCaptureEndedWithLocalAudio(message: {
 
     await finalizeRecordingBytes(pending.bytes, {
       mimeType: pending.meta.mimeType ?? message.mimeType ?? "audio/webm",
+      micBytes: pending.micBytes,
+      micMimeType: pending.meta.micMimeType,
       meetingTitle: meetingTitle ?? pending.meta.meetingTitle,
       startedAt,
       durationMs,
@@ -485,6 +488,8 @@ async function stopRecordingAndFinalize(opts?: {
 
       return finalizeRecordingBytes(pending.bytes, {
         mimeType: pending.meta.mimeType ?? response.mimeType ?? "audio/webm",
+        micBytes: pending.micBytes,
+        micMimeType: pending.meta.micMimeType,
         meetingTitle,
         startedAt,
         durationMs,
@@ -537,6 +542,8 @@ async function finalizeRecordingBytes(
   audioBytes: Uint8Array,
   params: {
     mimeType: string;
+    micBytes?: Uint8Array;
+    micMimeType?: string;
     meetingTitle?: string;
     startedAt: number;
     durationMs: number;
@@ -550,6 +557,8 @@ async function finalizeRecordingBytes(
     startedAt,
     durationMs,
     mimeType,
+    micBytes,
+    micMimeType,
     autoStoppedReason,
     transcribe = true,
     existingLocalAudioId,
@@ -571,6 +580,8 @@ async function finalizeRecordingBytes(
       meetingTitle: displayTitle,
       startedAt: new Date(startedAt).toISOString(),
       durationMs,
+      micBytes,
+      micMimeType,
     });
   }
 
@@ -599,6 +610,8 @@ async function finalizeRecordingBytes(
     const upload = await uploadRecording({
       bytes: audioBytes,
       mimeType,
+      micBytes,
+      micMimeType,
       meetingTitle: displayTitle,
       startedAt,
       durationMs,
@@ -671,6 +684,8 @@ async function handleRetryUpload(
     const upload = await uploadRecording({
       bytes: pending.bytes,
       mimeType: pending.meta.mimeType,
+      micBytes: pending.micBytes,
+      micMimeType: pending.meta.micMimeType,
       meetingTitle: pending.meta.meetingTitle,
       startedAt: new Date(pending.meta.startedAt).getTime(),
       durationMs: pending.meta.durationMs,

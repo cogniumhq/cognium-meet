@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatTimestamp,
+  parseAudioCaptureMode,
   parseTranscriptionModel,
   segmentsToPlainText,
   transcriptionProgressLabel,
@@ -119,6 +120,14 @@ describe("parseTranscriptionModel", () => {
       "gpt-4o-transcribe-diarize",
     );
     expect(parseTranscriptionModel("invalid", "whisper-1")).toBe("whisper-1");
+  });
+});
+
+describe("parseAudioCaptureMode", () => {
+  it("accepts known modes and falls back otherwise", () => {
+    expect(parseAudioCaptureMode("dual-track")).toBe("dual-track");
+    expect(parseAudioCaptureMode("mixed")).toBe("mixed");
+    expect(parseAudioCaptureMode("invalid", "dual-track")).toBe("dual-track");
   });
 });
 

@@ -1,7 +1,16 @@
-import type { RecordingMeta, TranscriptionModel } from "@cognium/meet-shared";
-import { parseTranscriptionModel } from "@cognium/meet-shared";
+import type {
+  RecordingMeta,
+  TranscriptResult,
+  TranscriptionModel,
+  TranscriptionProgress,
+} from "@cognium/meet-shared";
 import type { TranscriptionProvider } from "./provider.js";
 import { RecordingStore } from "../storage/recording-store.js";
+import {
+  mergeSpeakerSegments,
+  SPEAKER_OTHERS,
+  SPEAKER_YOU,
+} from "./merge-segments.js";
 
 async function saveProgress(
   store: RecordingStore,
@@ -39,6 +48,62 @@ export function isTranscriptionActive(id: string): boolean {
   return activeJobs.has(id);
 }
 
+async function transcribeDualTrack(
+  deps: ProcessingDeps,
+  id: string,
+  meta: RecordingMeta,
+): Promise<TranscriptResult> {
+  const whisper = deps.getTranscriptionProvider("whisper-1");
+  const transcribeOpts = {
+    meetingTitle: meta.meetingTitle,
+    onProgress: (progress: TranscriptionProgress) =>
+      saveProgress(deps.store, id, progress),
+  };
+
+  await saveProgress(deps.store, id, {
+    phase: "transcribing",
+    profile: "whisper",
+    step: 1,
+    totalSteps: 2,
+    label: "Transcribing tab audio (Others)…",
+    updatedAt: new Date().toISOString(),
+  });
+
+  const tabResult = await whisper.transcribe(
+    deps.store.audioPath(id),
+    transcribeOpts,
+  );
+
+  await saveProgress(deps.store, id, {
+    phase: "transcribing",
+    profile: "whisper",
+    step: 2,
+    totalSteps: 2,
+    label: "Transcribing mic audio (You)…",
+    updatedAt: new Date().toISOString(),
+  });
+
+  const micResult = await whisper.transcribe(
+    deps.store.micAudioPath(id),
+    transcribeOpts,
+  );
+
+  console.log(
+    `[transcription] dual-track id=${id} others=${tabResult.segments.length} you=${micResult.segments.length}`,
+  );
+
+  return {
+    recordingId: "",
+    language: tabResult.language ?? micResult.language,
+    duration:
+      Math.max(tabResult.duration ?? 0, micResult.duration ?? 0) || undefined,
+    segments: mergeSpeakerSegments(
+      { speaker: SPEAKER_OTHERS, segments: tabResult.segments },
+      { speaker: SPEAKER_YOU, segments: micResult.segments },
+    ),
+  };
+}
+
 export async function processRecording(
   deps: ProcessingDeps,
   id: string,
@@ -52,8 +117,11 @@ export async function processRecording(
     throw new Error("Audio file missing — cannot transcribe");
   }
 
-  const model =
-    meta.transcriptionModel ?? deps.defaultTranscriptionModel;
+  const dualTrack =
+    meta.captureMode === "dual-track" && (await deps.store.micAudioExists(id));
+  const model = dualTrack
+    ? "whisper-1"
+    : (meta.transcriptionModel ?? deps.defaultTranscriptionModel);
   const transcription = deps.getTranscriptionProvider(model);
 
   await deps.store.saveMeta({
@@ -65,13 +133,15 @@ export async function processRecording(
   });
 
   console.log(
-    `[transcription] started id=${id} model=${model} title=${meta.meetingTitle ?? "(none)"}`,
+    `[transcription] started id=${id} model=${model} capture=${meta.captureMode ?? "mixed"} dual=${dualTrack} title=${meta.meetingTitle ?? "(none)"}`,
   );
 
-  const result = await transcription.transcribe(deps.store.audioPath(id), {
-    meetingTitle: meta.meetingTitle,
-    onProgress: (progress) => saveProgress(deps.store, id, progress),
-  });
+  const result = dualTrack
+    ? await transcribeDualTrack(deps, id, meta)
+    : await transcription.transcribe(deps.store.audioPath(id), {
+        meetingTitle: meta.meetingTitle,
+        onProgress: (progress) => saveProgress(deps.store, id, progress),
+      });
 
   const stillExists = await deps.store.getMeta(id);
   if (!stillExists) {

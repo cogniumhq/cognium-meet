@@ -1,5 +1,8 @@
-import type { RecordingMeta } from "@cognium/meet-shared";
-import { DEFAULT_TRANSCRIPTION_MODEL } from "@cognium/meet-shared";
+import type { AudioCaptureMode, RecordingMeta } from "@cognium/meet-shared";
+import {
+  DEFAULT_AUDIO_CAPTURE_MODE,
+  DEFAULT_TRANSCRIPTION_MODEL,
+} from "@cognium/meet-shared";
 import { isLikelyAudio } from "./audio-bytes.js";
 import { getSettings } from "./storage.js";
 
@@ -11,6 +14,8 @@ export interface UploadResult {
 export async function uploadRecording(params: {
   bytes: Uint8Array;
   mimeType?: string;
+  micBytes?: Uint8Array;
+  micMimeType?: string;
   meetingTitle?: string;
   startedAt: number;
   durationMs: number;
@@ -33,6 +38,13 @@ export async function uploadRecording(params: {
     new Blob([params.bytes], { type: params.mimeType ?? "audio/webm" }),
     "recording.webm",
   );
+  if (params.micBytes && params.micBytes.length > 0 && isLikelyAudio(params.micBytes)) {
+    form.append(
+      "micAudio",
+      new Blob([params.micBytes], { type: params.micMimeType ?? "audio/webm" }),
+      "mic.webm",
+    );
+  }
   if (params.meetingTitle) {
     form.append("meetingTitle", params.meetingTitle);
   }
@@ -41,6 +53,10 @@ export async function uploadRecording(params: {
   form.append(
     "transcriptionModel",
     settings.transcriptionModel ?? DEFAULT_TRANSCRIPTION_MODEL,
+  );
+  form.append(
+    "captureMode",
+    settings.captureMode ?? DEFAULT_AUDIO_CAPTURE_MODE,
   );
 
   const response = await fetch(`${settings.apiUrl}/v1/recordings`, {
@@ -87,6 +103,7 @@ export async function retryRecording(id: string): Promise<RecordingMeta> {
     headers,
     body: JSON.stringify({
       transcriptionModel: settings.transcriptionModel ?? DEFAULT_TRANSCRIPTION_MODEL,
+      captureMode: settings.captureMode ?? DEFAULT_AUDIO_CAPTURE_MODE,
     }),
   });
   if (!response.ok) {

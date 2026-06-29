@@ -1,9 +1,12 @@
 import { listAudioInputDevices } from "./audio-devices.js";
 import { getSettings, saveSettings } from "./storage.js";
 import {
+  AUDIO_CAPTURE_MODES,
+  audioCaptureModeLabel,
   DEFAULT_TRANSCRIPTION_MODEL,
   TRANSCRIPTION_MODELS,
   transcriptionModelLabel,
+  type AudioCaptureMode,
   type TranscriptionModel,
 } from "@cognium/meet-shared";
 
@@ -18,6 +21,9 @@ export interface SettingsFormElements {
   micDeviceSelect: HTMLSelectElement;
   micHint: HTMLElement;
   transcriptionModelSelect: HTMLSelectElement;
+  captureModeSelect: HTMLSelectElement;
+  captureModeHint: HTMLElement;
+  dualTrackNote: HTMLElement;
 }
 
 export function getSettingsFormElements(root: ParentNode): SettingsFormElements {
@@ -34,6 +40,9 @@ export function getSettingsFormElements(root: ParentNode): SettingsFormElements 
     transcriptionModelSelect: root.querySelector(
       "#transcription-model",
     ) as HTMLSelectElement,
+    captureModeSelect: root.querySelector("#capture-mode") as HTMLSelectElement,
+    captureModeHint: root.querySelector("#capture-mode-hint") as HTMLElement,
+    dualTrackNote: root.querySelector("#dual-track-note") as HTMLElement,
   };
 }
 
@@ -44,6 +53,8 @@ export async function initSettingsForm(root: ParentNode): Promise<void> {
   els.apiUrlInput.value = settings.apiUrl;
   els.apiTokenInput.value = settings.apiToken;
   populateTranscriptionModels(els, settings.transcriptionModel);
+  populateCaptureModes(els, settings.captureMode);
+  updateCaptureModeUi(els);
 
   els.tokenToggleBtn.addEventListener("click", () => {
     const showing = els.apiTokenInput.type === "text";
@@ -58,6 +69,7 @@ export async function initSettingsForm(root: ParentNode): Promise<void> {
   els.transcriptionModelSelect.addEventListener("change", () =>
     void saveTranscriptionModel(els),
   );
+  els.captureModeSelect.addEventListener("change", () => void saveCaptureMode(els));
 
   const hasMic = await refreshMicPermission(els);
   if (hasMic) {
@@ -181,6 +193,39 @@ function populateTranscriptionModels(
   els.transcriptionModelSelect.value = selected ?? DEFAULT_TRANSCRIPTION_MODEL;
 }
 
+function populateCaptureModes(
+  els: SettingsFormElements,
+  selected?: AudioCaptureMode,
+): void {
+  els.captureModeSelect.innerHTML = "";
+  for (const mode of AUDIO_CAPTURE_MODES) {
+    const option = document.createElement("option");
+    option.value = mode;
+    option.textContent = audioCaptureModeLabel(mode);
+    els.captureModeSelect.appendChild(option);
+  }
+  els.captureModeSelect.value = selected ?? "mixed";
+}
+
+function updateCaptureModeUi(els: SettingsFormElements): void {
+  const dual = els.captureModeSelect.value === "dual-track";
+  els.dualTrackNote.classList.toggle("hidden", !dual);
+  els.micHint.textContent = dual
+    ? "Tab and mic are recorded as separate files. Your mic is labeled You; tab audio is Others. Allow mic and pick a device below."
+    : "Tab audio is always recorded. Your mic is mixed in so your voice is included. Chrome ignores Linux/GNOME input settings — pick the device below.";
+}
+
+async function saveCaptureMode(els: SettingsFormElements): Promise<void> {
+  const settings = await getSettings();
+  const captureMode = els.captureModeSelect.value as AudioCaptureMode;
+  await saveSettings({
+    ...settings,
+    captureMode,
+  });
+  updateCaptureModeUi(els);
+  setSaveStatus(els, "Capture mode saved.", false);
+}
+
 async function saveTranscriptionModel(els: SettingsFormElements): Promise<void> {
   const settings = await getSettings();
   const model = els.transcriptionModelSelect.value as TranscriptionModel;
@@ -199,6 +244,8 @@ async function saveApiSettings(els: SettingsFormElements): Promise<void> {
     transcriptionModel:
       (els.transcriptionModelSelect.value as TranscriptionModel) ||
       settings.transcriptionModel,
+    captureMode:
+      (els.captureModeSelect.value as AudioCaptureMode) || settings.captureMode,
     microphoneDeviceId: els.micDeviceSelect.disabled
       ? settings.microphoneDeviceId
       : els.micDeviceSelect.value || undefined,

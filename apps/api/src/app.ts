@@ -3,7 +3,7 @@ import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
 import { v4 as uuidv4 } from "uuid";
 import type { RecordingMeta } from "@cognium/meet-shared";
-import { parseTranscriptionModel } from "@cognium/meet-shared";
+import { parseAudioCaptureMode, parseTranscriptionModel } from "@cognium/meet-shared";
 import { RecordingStore } from "./storage/recording-store.js";
 import { isLikelyAudio } from "./transcription/prepare-audio.js";
 import {
@@ -20,6 +20,7 @@ import { requestLog } from "./middleware/request-log.js";
 interface AppDeps extends ProcessingDeps {
   apiToken?: string;
   maxUploadBytes?: number;
+  defaultCaptureMode?: import("@cognium/meet-shared").AudioCaptureMode;
 }
 
 export function createApp(deps: AppDeps) {
@@ -72,14 +73,17 @@ export function createApp(deps: AppDeps) {
     async (c) => {
       const contentType = c.req.header("content-type") ?? "";
     let buffer: Buffer;
+    let micBuffer: Buffer | undefined;
     let meetingTitle: string | undefined;
     let startedAt: string;
     let durationMs: number | undefined;
     let transcriptionModel = deps.defaultTranscriptionModel;
+    let captureMode = deps.defaultCaptureMode ?? "mixed";
 
     if (contentType.includes("multipart/form-data")) {
       const form = await c.req.parseBody();
       const audio = form.audio;
+      const micAudio = form.micAudio;
 
       if (!(audio instanceof File)) {
         return c.json({ error: "Missing audio file" }, 400);
@@ -99,8 +103,19 @@ export function createApp(deps: AppDeps) {
         form.transcriptionModel,
         deps.defaultTranscriptionModel,
       );
+      captureMode = parseAudioCaptureMode(
+        form.captureMode,
+        deps.defaultCaptureMode ?? "mixed",
+      );
 
       buffer = Buffer.from(await audio.arrayBuffer());
+
+      if (micAudio instanceof File && micAudio.size > 0) {
+        const candidate = Buffer.from(await micAudio.arrayBuffer());
+        if (isLikelyAudio(candidate)) {
+          micBuffer = candidate;
+        }
+      }
     } else {
       let body: {
         audioBase64?: string;
@@ -108,6 +123,7 @@ export function createApp(deps: AppDeps) {
         startedAt?: string;
         durationMs?: number;
         transcriptionModel?: string;
+        captureMode?: string;
       };
       try {
         body = await c.req.json();
@@ -130,6 +146,10 @@ export function createApp(deps: AppDeps) {
         body.transcriptionModel,
         deps.defaultTranscriptionModel,
       );
+      captureMode = parseAudioCaptureMode(
+        body.captureMode,
+        deps.defaultCaptureMode ?? "mixed",
+      );
     }
 
     if (!isLikelyAudio(buffer)) {
@@ -144,6 +164,9 @@ export function createApp(deps: AppDeps) {
 
     const id = uuidv4();
     await deps.store.saveAudio(id, buffer);
+    if (micBuffer) {
+      await deps.store.saveMicAudio(id, micBuffer);
+    }
 
     const meta: RecordingMeta = {
       id,
@@ -152,6 +175,7 @@ export function createApp(deps: AppDeps) {
       durationMs: Number.isFinite(durationMs) ? durationMs : undefined,
       status: "processing",
       transcriptionModel,
+      captureMode,
       processingStartedAt: new Date().toISOString(),
     };
     await deps.store.saveMeta(meta);
@@ -159,7 +183,7 @@ export function createApp(deps: AppDeps) {
     enqueueTranscription(deps, id);
 
     console.log(
-      `[api] recording created id=${id} bytes=${buffer.length} model=${transcriptionModel} title=${meetingTitle ?? "(none)"}`,
+      `[api] recording created id=${id} bytes=${buffer.length} mic=${micBuffer?.length ?? 0} capture=${captureMode} model=${transcriptionModel} title=${meetingTitle ?? "(none)"}`,
     );
 
     return c.json({ id, status: meta.status }, 202);

@@ -49,6 +49,8 @@ export interface RecordingMeta {
   language?: string;
   /** OpenAI model used for this recording (set at upload; used on retry/resume). */
   transcriptionModel?: TranscriptionModel;
+  /** How tab + mic were captured (mixed single file vs separate tracks). */
+  captureMode?: AudioCaptureMode;
   processingStartedAt?: string;
   /** Present while status is processing */
   progress?: TranscriptionProgress;
@@ -88,11 +90,35 @@ export function transcriptionModelToProfile(
   return model === "whisper-1" ? "whisper" : "diarize";
 }
 
+export const AUDIO_CAPTURE_MODES = ["mixed", "dual-track"] as const;
+
+export type AudioCaptureMode = (typeof AUDIO_CAPTURE_MODES)[number];
+
+export const DEFAULT_AUDIO_CAPTURE_MODE: AudioCaptureMode = "mixed";
+
+export function parseAudioCaptureMode(
+  value: unknown,
+  fallback: AudioCaptureMode = DEFAULT_AUDIO_CAPTURE_MODE,
+): AudioCaptureMode {
+  return value === "mixed" || value === "dual-track" ? value : fallback;
+}
+
+export function audioCaptureModeLabel(mode: AudioCaptureMode): string {
+  switch (mode) {
+    case "mixed":
+      return "Mixed — tab + mic in one file";
+    case "dual-track":
+      return "Dual-track — separate tab & mic (You / Others)";
+  }
+}
+
 export interface ExtensionSettings {
   apiUrl: string;
   apiToken: string;
   /** OpenAI transcription model sent with each upload */
   transcriptionModel?: TranscriptionModel;
+  /** Tab + mic capture strategy */
+  captureMode?: AudioCaptureMode;
   /** Chrome media deviceId for audioinput; empty = Chrome default */
   microphoneDeviceId?: string;
 }

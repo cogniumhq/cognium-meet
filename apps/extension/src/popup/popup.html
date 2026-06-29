@@ -84,8 +84,21 @@
           </section>
 
           <section class="settings-card">
+            <h3>Recording</h3>
+            <p id="capture-mode-hint">How tab audio and your microphone are captured.</p>
+
+            <div class="field">
+              <label for="capture-mode">Capture mode</label>
+              <select id="capture-mode"></select>
+            </div>
+          </section>
+
+          <section class="settings-card">
             <h3>Transcription</h3>
             <p>Choose speed vs speaker labels. Your OpenAI key on the server must have access to the selected model.</p>
+            <p id="dual-track-note" class="settings-note hidden">
+              Dual-track mode labels your mic as <strong>You</strong> and tab audio as <strong>Others</strong> using Whisper (ignores the model above).
+            </p>
 
             <div class="field">
               <label for="transcription-model">Model</label>

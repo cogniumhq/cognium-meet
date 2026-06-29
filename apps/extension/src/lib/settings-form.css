@@ -54,6 +54,19 @@
   line-height: 1.45;
 }
 
+.settings-note {
+  font-size: 11px;
+  line-height: 1.45;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #cbd5e1;
+}
+
+.settings-note.hidden {
+  display: none;
+}
+
 .field {
   display: flex;
   flex-direction: column;
@@ -204,6 +217,15 @@ body.options-page .settings-card h3 {
 
 body.options-page .settings-card p {
   color: #64748b;
+}
+
+body.options-page .settings-card p {
+  color: #64748b;
+}
+
+body.options-page .settings-note {
+  background: #f1f5f9;
+  color: #334155;
 }
 
 body.options-page .field label {

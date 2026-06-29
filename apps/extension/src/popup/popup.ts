@@ -11,7 +11,7 @@ import {
   pollRecording,
   retryRecording,
 } from "../lib/upload.js";
-import { deletePendingAudio, downloadPendingAudio } from "../lib/pending-audio-store.js";
+import { deletePendingAudio, downloadPendingAudio, loadPendingAudio } from "../lib/pending-audio-store.js";
 import {
   getHistory,
   removeHistoryEntry,
@@ -488,6 +488,7 @@ function appendLocalAudioActions(
   li: HTMLLIElement,
   item: { id: string; localAudioId?: string; meetingTitle?: string },
   uploadLabel = "Retry upload",
+  hasMicTrack = false,
 ): void {
   if (!item.localAudioId) {
     return;
@@ -506,16 +507,31 @@ function appendLocalAudioActions(
   });
   links.appendChild(upload);
 
-  const download = document.createElement("button");
-  download.type = "button";
-  download.className = "link-btn";
-  download.textContent = "Download audio";
-  download.addEventListener("click", () => {
-    void downloadPendingAudio(item.localAudioId!, `${base}.webm`).catch((err) =>
-      setStatus(err instanceof Error ? err.message : String(err), true),
-    );
+  const downloadTab = document.createElement("button");
+  downloadTab.type = "button";
+  downloadTab.className = "link-btn";
+  downloadTab.textContent = hasMicTrack ? "Download tab" : "Download audio";
+  downloadTab.addEventListener("click", () => {
+    void downloadPendingAudio(
+      item.localAudioId!,
+      hasMicTrack ? `${base}-tab.webm` : `${base}.webm`,
+      "tab",
+    ).catch((err) => setStatus(err instanceof Error ? err.message : String(err), true));
   });
-  links.appendChild(download);
+  links.appendChild(downloadTab);
+
+  if (hasMicTrack) {
+    const downloadMic = document.createElement("button");
+    downloadMic.type = "button";
+    downloadMic.className = "link-btn";
+    downloadMic.textContent = "Download mic";
+    downloadMic.addEventListener("click", () => {
+      void downloadPendingAudio(item.localAudioId!, `${base}-mic.webm`, "mic").catch((err) =>
+        setStatus(err instanceof Error ? err.message : String(err), true),
+      );
+    });
+    links.appendChild(downloadMic);
+  }
 
   const del = document.createElement("button");
   del.type = "button";
@@ -566,6 +582,11 @@ async function renderHistory(): Promise<void> {
 
   for (const item of history) {
     const li = document.createElement("li");
+    let hasMicTrack = false;
+    if (item.localAudioId) {
+      const pending = await loadPendingAudio(item.localAudioId);
+      hasMicTrack = Boolean(pending?.micBytes?.length);
+    }
 
     const title = document.createElement("div");
     title.className = "history-title";
@@ -586,11 +607,11 @@ async function renderHistory(): Promise<void> {
         err.textContent = item.error;
         li.appendChild(err);
       }
-      appendLocalAudioActions(li, item, "Retry upload");
+      appendLocalAudioActions(li, item, "Retry upload", hasMicTrack);
     }
 
     if (item.status === "saved" && item.localAudioId) {
-      appendLocalAudioActions(li, item, "Transcribe");
+      appendLocalAudioActions(li, item, "Transcribe", hasMicTrack);
     }
 
     if (item.status === "failed" && !item.localAudioId) {
