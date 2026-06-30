@@ -1,6 +1,7 @@
-import type { TranscriptionProgress } from "@cognium/meet-shared";
+import type { RecordingMeta, TranscriptionProgress } from "@cognium/meet-shared";
 import {
   isTranscriptionProgressActive,
+  mergeTranscriptionProgress,
   transcriptionProgressLabel,
   transcriptionProgressPercent,
 } from "@cognium/meet-shared";
@@ -8,14 +9,16 @@ import {
   deleteServerRecording,
   downloadTranscript,
   fetchRecordingStatus,
-  pollRecording,
   retryRecording,
 } from "../lib/upload.js";
 import { deletePendingAudio, downloadPendingAudio, loadPendingAudio } from "../lib/pending-audio-store.js";
 import {
+  findServerProcessingEntry,
   getHistory,
+  HISTORY_KEY,
   removeHistoryEntry,
   updateHistoryEntry,
+  type StoredRecording,
 } from "../lib/storage.js";
 import { isRecordableTabUrl } from "../lib/recordable-tab.js";
 import { initSettingsForm } from "../lib/settings-form.js";
@@ -43,7 +46,9 @@ let timerInterval: number | undefined;
 let progressTickInterval: number | undefined;
 let recordingStartedAt: number | undefined;
 let currentProgress: TranscriptionProgress | undefined;
-const activePolls = new Set<string>();
+let watchingTranscriptionId: string | undefined;
+let displayedPercentFloor = 0;
+let historyRenderGen = 0;
 
 void init();
 
@@ -77,21 +82,131 @@ async function init(): Promise<void> {
   }
 
   await refreshStaleHistory();
+  await restoreTranscriptionProgressUi();
   await renderHistory();
-  void resumeProcessingPolls();
+  subscribeToHistoryUpdates();
 }
 
-async function resumeProcessingPolls(): Promise<void> {
-  const history = await getHistory();
-  for (const item of history) {
-    if (item.status === "processing" && !item.localAudioId) {
-      void pollTranscription(item.id);
+function subscribeToHistoryUpdates(): void {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "local" || !changes[HISTORY_KEY]) {
+      return;
     }
+    void onHistoryStorageChanged(
+      changes[HISTORY_KEY].newValue as StoredRecording[] | undefined,
+    );
+  });
+}
+
+async function onHistoryStorageChanged(history?: StoredRecording[]): Promise<void> {
+  const list = history ?? (await getHistory());
+
+  if (watchingTranscriptionId) {
+    const watched = list.find((item) => item.id === watchingTranscriptionId);
+    if (watched?.status === "processing") {
+      if (watched.progress) {
+        showGlobalProgress(watched.progress);
+      }
+      setStatus("Transcribing… — safe to close this popup");
+    } else if (watched?.status === "completed") {
+      watchingTranscriptionId = undefined;
+      showGlobalProgress(undefined);
+      setStatus("Transcript ready — see Recent transcripts below");
+    } else if (watched?.status === "failed") {
+      watchingTranscriptionId = undefined;
+      showGlobalProgress(undefined);
+      setStatus(watched.error ?? "Transcription failed", true);
+    }
+  } else {
+    const active = findServerProcessingEntry(list);
+    if (active?.progress) {
+      watchingTranscriptionId = active.id;
+      showGlobalProgress(active.progress);
+      setStatus("Transcribing… — safe to close this popup");
+    }
+  }
+
+  await renderHistory();
+}
+
+async function restoreTranscriptionProgressUi(): Promise<void> {
+  const history = await getHistory();
+  const active = findServerProcessingEntry(history);
+  if (!active) {
+    return;
+  }
+
+  if (active.id !== watchingTranscriptionId) {
+    currentProgress = undefined;
+    displayedPercentFloor = 0;
+  }
+  watchingTranscriptionId = active.id;
+  if (active.progress) {
+    showGlobalProgress(active.progress);
+    setStatus("Transcribing… — safe to close this popup");
+    return;
+  }
+
+  try {
+    const meta = await fetchRecordingStatus(active.id);
+    applyTranscriptionMeta(meta);
+  } catch {
+    // API may be offline; the service worker will refresh history when it is back.
   }
 }
 
-function renderProgressUi(progress?: TranscriptionProgress): void {
-  currentProgress = progress;
+function applyTranscriptionMeta(meta: RecordingMeta): void {
+  if (meta.status === "processing") {
+    watchingTranscriptionId = meta.id;
+    if (meta.progress) {
+      showGlobalProgress(meta.progress);
+    }
+    setStatus("Transcribing… — safe to close this popup");
+    return;
+  }
+
+  if (meta.status === "completed") {
+    watchingTranscriptionId = undefined;
+    showGlobalProgress(undefined);
+    setStatus("Transcript ready — see Recent transcripts below");
+    return;
+  }
+
+  if (meta.status === "failed") {
+    watchingTranscriptionId = undefined;
+    showGlobalProgress(undefined);
+    setStatus(meta.error ?? "Transcription failed", true);
+  }
+}
+
+async function showTranscriptionProgressFor(id: string): Promise<void> {
+  if (id !== watchingTranscriptionId) {
+    currentProgress = undefined;
+    displayedPercentFloor = 0;
+  }
+  watchingTranscriptionId = id;
+  try {
+    const meta = await fetchRecordingStatus(id);
+    applyTranscriptionMeta(meta);
+  } catch {
+    showGlobalProgress({ phase: "preparing", label: "Starting transcription…" });
+    setStatus("Transcribing… — safe to close this popup");
+  }
+}
+
+function showGlobalProgress(incoming?: TranscriptionProgress): void {
+  if (!incoming) {
+    currentProgress = undefined;
+    displayedPercentFloor = 0;
+    renderProgressUi(undefined);
+    return;
+  }
+
+  currentProgress = mergeTranscriptionProgress(currentProgress, incoming);
+  renderProgressUi(currentProgress);
+}
+
+function renderProgressUi(progress?: TranscriptionProgress, nowMs: number = Date.now()): void {
   if (!progress) {
     transcriptionProgress.classList.add("hidden");
     progressFill.classList.remove("progress-fill--active");
@@ -99,12 +214,17 @@ function renderProgressUi(progress?: TranscriptionProgress): void {
     return;
   }
 
-  const now = Date.now();
-  const pct = transcriptionProgressPercent(progress, now);
   const active = isTranscriptionProgressActive(progress);
+  let pct = transcriptionProgressPercent(progress, nowMs);
+  if (progress.phase === "transcribing") {
+    displayedPercentFloor = Math.max(displayedPercentFloor, pct);
+    pct = displayedPercentFloor;
+  } else {
+    displayedPercentFloor = pct;
+  }
 
   transcriptionProgress.classList.remove("hidden");
-  progressLabel.textContent = transcriptionProgressLabel(progress, now);
+  progressLabel.textContent = transcriptionProgressLabel(progress, nowMs);
   progressFill.style.width = `${pct}%`;
   progressFill.classList.toggle("progress-fill--active", active);
   progressPercent.textContent = `${pct}%`;
@@ -116,6 +236,9 @@ function renderProgressUi(progress?: TranscriptionProgress): void {
     progressTickInterval = window.setInterval(() => {
       if (currentProgress) {
         renderProgressUi(currentProgress);
+        if (watchingTranscriptionId) {
+          void renderHistory();
+        }
       }
     }, 1000);
   } else if (!active) {
@@ -130,18 +253,24 @@ function stopProgressTick(): void {
   }
 }
 
-function showGlobalProgress(progress?: TranscriptionProgress): void {
-  renderProgressUi(progress);
-}
-
 function createProgressBarElement(
-  progress: TranscriptionProgress | undefined,
+  itemId: string,
+  storedProgress?: TranscriptionProgress,
 ): HTMLDivElement | null {
+  const progress =
+    itemId === watchingTranscriptionId && currentProgress
+      ? currentProgress
+      : storedProgress;
   if (!progress) {
     return null;
   }
+
   const now = Date.now();
-  const pct = transcriptionProgressPercent(progress, now);
+  let pct = transcriptionProgressPercent(progress, now);
+  if (itemId === watchingTranscriptionId && progress.phase === "transcribing") {
+    pct = displayedPercentFloor;
+  }
+
   const active = isTranscriptionProgressActive(progress);
   const wrap = document.createElement("div");
   wrap.className = "transcription-progress history-progress";
@@ -173,43 +302,6 @@ function createProgressBarElement(
   wrap.appendChild(track);
   wrap.appendChild(percent);
   return wrap;
-}
-
-async function pollTranscription(id: string): Promise<void> {
-  if (activePolls.has(id)) {
-    return;
-  }
-  activePolls.add(id);
-  try {
-    const meta = await pollRecording(id, {
-      intervalMs: 2000,
-      timeoutMs: 90 * 60 * 1000,
-      onUpdate: (update) => {
-        showGlobalProgress(update.progress);
-        void updateHistoryEntry(id, {
-          status: update.status,
-          error: update.error,
-          progress: update.progress,
-        }).then(() => renderHistory());
-      },
-    });
-    showGlobalProgress(undefined);
-    await updateHistoryEntry(id, {
-      status: meta.status,
-      error: meta.error,
-      progress: undefined,
-    });
-    await renderHistory();
-    if (meta.status === "completed") {
-      setStatus("Transcript ready — see Recent transcripts below");
-    } else if (meta.status === "failed") {
-      setStatus(meta.error ?? "Transcription failed", true);
-    }
-  } catch {
-    showGlobalProgress(undefined);
-  } finally {
-    activePolls.delete(id);
-  }
 }
 
 function showSettings(open: boolean): void {
@@ -280,7 +372,6 @@ async function stopRecording(transcribe: boolean): Promise<void> {
     }
 
     exitRecordingUi();
-    await renderHistory();
 
     if (response.savedLocally) {
       setStatus("Recording saved — transcribe when ready from Recent transcripts");
@@ -302,9 +393,7 @@ async function stopRecording(transcribe: boolean): Promise<void> {
     }
 
     setStatus("Transcribing… — safe to close this popup");
-    showGlobalProgress({ phase: "preparing", label: "Starting transcription…" });
-
-    void pollTranscription(response.recordingId);
+    void showTranscriptionProgressFor(response.recordingId);
   } catch (err) {
     const status = await chrome.runtime.sendMessage({ type: "GET_STATUS" });
     const message = err instanceof Error ? err.message : String(err);
@@ -391,12 +480,15 @@ async function refreshStaleHistory(): Promise<void> {
 async function retryTranscription(id: string): Promise<void> {
   setStatus("Retrying transcription…");
   showGlobalProgress({ phase: "preparing", label: "Starting transcription…" });
+  watchingTranscriptionId = id;
   try {
     await retryRecording(id);
     await updateHistoryEntry(id, { status: "processing", error: undefined, progress: undefined });
     await renderHistory();
-    void pollTranscription(id);
+    void chrome.runtime.sendMessage({ type: "TRACK_TRANSCRIPTION", recordingId: id });
+    void showTranscriptionProgressFor(id);
   } catch (err) {
+    watchingTranscriptionId = undefined;
     showGlobalProgress(undefined);
     setStatus(err instanceof Error ? err.message : String(err), true);
   }
@@ -414,9 +506,12 @@ async function retryUpload(localAudioId: string): Promise<void> {
     }
     await renderHistory();
     if (response?.recordingId) {
-      setStatus("Transcribing…");
-      showGlobalProgress({ phase: "preparing", label: "Starting transcription…" });
-      void pollTranscription(response.recordingId);
+      setStatus("Transcribing… — safe to close this popup");
+      void showTranscriptionProgressFor(response.recordingId);
+      void chrome.runtime.sendMessage({
+        type: "TRACK_TRANSCRIPTION",
+        recordingId: response.recordingId,
+      });
     }
   } catch (err) {
     setStatus(err instanceof Error ? err.message : String(err), true);
@@ -570,7 +665,11 @@ function appendRemoveAction(
 }
 
 async function renderHistory(): Promise<void> {
+  const gen = ++historyRenderGen;
   const history = await getHistory();
+  if (gen !== historyRenderGen) {
+    return;
+  }
 
   historyList.innerHTML = "";
   if (history.length === 0) {
@@ -585,6 +684,9 @@ async function renderHistory(): Promise<void> {
     let hasMicTrack = false;
     if (item.localAudioId) {
       const pending = await loadPendingAudio(item.localAudioId);
+      if (gen !== historyRenderGen) {
+        return;
+      }
       hasMicTrack = Boolean(pending?.micBytes?.length);
     }
 
@@ -668,13 +770,16 @@ async function renderHistory(): Promise<void> {
     }
 
     if (item.status === "processing") {
-      const progressBar = createProgressBarElement(item.progress);
+      const progressBar = createProgressBarElement(item.id, item.progress);
       if (progressBar) {
         li.appendChild(progressBar);
       }
       appendRemoveAction(li, item);
     }
 
+    if (gen !== historyRenderGen) {
+      return;
+    }
     historyList.appendChild(li);
   }
 }

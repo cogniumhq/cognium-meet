@@ -1,11 +1,13 @@
-import type {
-  RecordingMeta,
-  TranscriptResult,
-  TranscriptionModel,
-  TranscriptionProgress,
+import {
+  mergeTranscriptionProgress,
+  type RecordingMeta,
+  type TranscriptResult,
+  type TranscriptionModel,
+  type TranscriptionProgress,
 } from "@cognium/meet-shared";
 import type { TranscriptionProvider } from "./provider.js";
 import { RecordingStore } from "../storage/recording-store.js";
+import { getAudioDurationSeconds } from "./prepare-audio.js";
 import {
   mergeSpeakerSegments,
   SPEAKER_OTHERS,
@@ -23,10 +25,10 @@ async function saveProgress(
   }
   await store.saveMeta({
     ...meta,
-    progress: {
+    progress: mergeTranscriptionProgress(meta.progress, {
       ...progress,
       updatedAt: progress.updatedAt ?? new Date().toISOString(),
-    },
+    }),
   });
 }
 
@@ -54,39 +56,49 @@ async function transcribeDualTrack(
   meta: RecordingMeta,
 ): Promise<TranscriptResult> {
   const whisper = deps.getTranscriptionProvider("whisper-1");
+  const tabPath = deps.store.audioPath(id);
+  const micPath = deps.store.micAudioPath(id);
+  const tabSeconds = (await getAudioDurationSeconds(tabPath)) ?? 0;
+  const micSeconds = (await getAudioDurationSeconds(micPath)) ?? 0;
+  const totalAudioSeconds = tabSeconds + micSeconds || undefined;
+
   const transcribeOpts = {
     meetingTitle: meta.meetingTitle,
     onProgress: (progress: TranscriptionProgress) =>
       saveProgress(deps.store, id, progress),
   };
 
+  const partStartedAt1 = new Date().toISOString();
   await saveProgress(deps.store, id, {
     phase: "transcribing",
     profile: "whisper",
     step: 1,
     totalSteps: 2,
     label: "Transcribing tab audio (Others)…",
-    updatedAt: new Date().toISOString(),
+    updatedAt: partStartedAt1,
+    partStartedAt: partStartedAt1,
+    partAudioSeconds: tabSeconds || undefined,
+    totalAudioSeconds,
+    completedAudioSeconds: 0,
   });
 
-  const tabResult = await whisper.transcribe(
-    deps.store.audioPath(id),
-    transcribeOpts,
-  );
+  const tabResult = await whisper.transcribe(tabPath, transcribeOpts);
 
+  const partStartedAt2 = new Date().toISOString();
   await saveProgress(deps.store, id, {
     phase: "transcribing",
     profile: "whisper",
     step: 2,
     totalSteps: 2,
     label: "Transcribing mic audio (You)…",
-    updatedAt: new Date().toISOString(),
+    updatedAt: partStartedAt2,
+    partStartedAt: partStartedAt2,
+    partAudioSeconds: micSeconds || undefined,
+    totalAudioSeconds,
+    completedAudioSeconds: tabSeconds,
   });
 
-  const micResult = await whisper.transcribe(
-    deps.store.micAudioPath(id),
-    transcribeOpts,
-  );
+  const micResult = await whisper.transcribe(micPath, transcribeOpts);
 
   console.log(
     `[transcription] dual-track id=${id} others=${tabResult.segments.length} you=${micResult.segments.length}`,

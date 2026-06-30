@@ -228,6 +228,12 @@ body.options-page .settings-note {
   color: #334155;
 }
 
+body.options-page .field input:disabled,
+body.options-page .field select:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
 body.options-page .field label {
   color: #334155;
 }

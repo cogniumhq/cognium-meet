@@ -2,7 +2,7 @@ import { blobToBytes } from "../lib/audio-bytes.js";
 import { listAudioInputDevices, micTrackLabel, openMicStream } from "../lib/audio-devices.js";
 import type { AudioCaptureMode } from "@cognium/meet-shared";
 import { isOffscreenMessage } from "../lib/messages.js";
-import { savePendingAudio } from "../lib/pending-audio-store.js";
+import { loadPendingAudio, savePendingAudio } from "../lib/pending-audio-store.js";
 
 interface DualTrackBlobs {
   tab: Blob;
@@ -28,6 +28,10 @@ let captureFlushPromise: Promise<void> | null = null;
 let activeStopPromise: Promise<Blob | DualTrackBlobs> | null = null;
 let lastStoppedBlob: Blob | null = null;
 let lastStoppedBlobs: DualTrackBlobs | null = null;
+/** Reused if stop and tab-close flush race. */
+let savedLocalAudioId: string | null = null;
+/** Suppress tab-ended flush while OFFSCREEN_STOP is handling stop. */
+let offscreenStopInProgress = false;
 let recordingMeta: { meetingTitle?: string; startedAt: number } | null = null;
 
 const PREFERRED_MIME = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
@@ -37,6 +41,9 @@ const PREFERRED_MIME = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
 async function flushRecordingOnCaptureEnd(
   reason: "tab_closed" | "capture_ended" = "capture_ended",
 ): Promise<void> {
+  if (offscreenStopInProgress) {
+    return;
+  }
   if (captureFlushPromise) {
     return captureFlushPromise;
   }
@@ -58,6 +65,19 @@ async function saveStoppedRecordingToLocal(): Promise<{
   byteLength: number;
   hasMicTrack: boolean;
 }> {
+  if (savedLocalAudioId) {
+    const existing = await loadPendingAudio(savedLocalAudioId);
+    if (existing) {
+      return {
+        localAudioId: savedLocalAudioId,
+        mimeType: existing.meta.mimeType,
+        byteLength: existing.meta.byteLength,
+        hasMicTrack: Boolean(existing.meta.micByteLength),
+      };
+    }
+    savedLocalAudioId = null;
+  }
+
   const startedAt = recordingMeta?.startedAt ?? Date.now();
   const durationMs = Date.now() - startedAt;
   const meetingTitle = recordingMeta?.meetingTitle;
@@ -81,6 +101,7 @@ async function saveStoppedRecordingToLocal(): Promise<{
       micBytes,
       micMimeType: blobs.mic?.type || mimeType,
     });
+    savedLocalAudioId = localAudioId;
 
     return {
       localAudioId,
@@ -100,6 +121,7 @@ async function saveStoppedRecordingToLocal(): Promise<{
     startedAt: new Date(startedAt).toISOString(),
     durationMs,
   });
+  savedLocalAudioId = localAudioId;
 
   return {
     localAudioId,
@@ -112,6 +134,9 @@ async function saveStoppedRecordingToLocal(): Promise<{
 async function doFlushRecordingOnCaptureEnd(
   reason: "tab_closed" | "capture_ended",
 ): Promise<void> {
+  if (offscreenStopInProgress) {
+    return;
+  }
   try {
     const saved = await saveStoppedRecordingToLocal();
     await chrome.runtime.sendMessage({
@@ -197,14 +222,19 @@ async function handleMessage(
     }
 
     if (message.type === "OFFSCREEN_STOP") {
-      const saved = await saveStoppedRecordingToLocal();
-      sendResponse({
-        type: "RECORDING_STOPPED",
-        localAudioId: saved.localAudioId,
-        mimeType: saved.mimeType,
-        byteLength: saved.byteLength,
-        hasMicTrack: saved.hasMicTrack,
-      });
+      offscreenStopInProgress = true;
+      try {
+        const saved = await saveStoppedRecordingToLocal();
+        sendResponse({
+          type: "RECORDING_STOPPED",
+          localAudioId: saved.localAudioId,
+          mimeType: saved.mimeType,
+          byteLength: saved.byteLength,
+          hasMicTrack: saved.hasMicTrack,
+        });
+      } finally {
+        offscreenStopInProgress = false;
+      }
       return;
     }
 
@@ -283,6 +313,7 @@ async function startRecording(
 
   lastStoppedBlob = null;
   lastStoppedBlobs = null;
+  savedLocalAudioId = null;
 
   if (captureMode === "dual-track") {
     tabRecorder = createTrackRecorder(tabStream);
@@ -416,6 +447,8 @@ function abortRecording(): void {
   mixedRecorder = null;
   lastStoppedBlob = null;
   lastStoppedBlobs = null;
+  savedLocalAudioId = null;
+  offscreenStopInProgress = false;
   activeStopPromise = null;
   captureFlushPromise = null;
   recordingMeta = null;

@@ -1,5 +1,10 @@
 import type { ExtensionSettings, TranscriptionProgress } from "@cognium/meet-shared";
-import { DEFAULT_API_URL, DEFAULT_AUDIO_CAPTURE_MODE, DEFAULT_TRANSCRIPTION_MODEL } from "@cognium/meet-shared";
+import {
+  DEFAULT_API_URL,
+  DEFAULT_AUDIO_CAPTURE_MODE,
+  DEFAULT_TRANSCRIPTION_MODEL,
+  mergeTranscriptionProgress,
+} from "@cognium/meet-shared";
 
 const SETTINGS_KEY = "settings";
 
@@ -35,6 +40,14 @@ export interface StoredRecording {
 
 const HISTORY_KEY = "recordingHistory";
 
+export { HISTORY_KEY };
+
+export function findServerProcessingEntry(
+  history: StoredRecording[],
+): StoredRecording | undefined {
+  return history.find((item) => item.status === "processing" && !item.localAudioId);
+}
+
 export async function addToHistory(entry: StoredRecording): Promise<void> {
   const result = await chrome.storage.local.get(HISTORY_KEY);
   const history = (result[HISTORY_KEY] as StoredRecording[] | undefined) ?? [];
@@ -48,9 +61,16 @@ export async function updateHistoryEntry(
 ): Promise<void> {
   const result = await chrome.storage.local.get(HISTORY_KEY);
   const history = (result[HISTORY_KEY] as StoredRecording[] | undefined) ?? [];
-  const next = history.map((item) =>
-    item.id === id ? { ...item, ...patch } : item,
-  );
+  const next = history.map((item) => {
+    if (item.id !== id) {
+      return item;
+    }
+    const merged: StoredRecording = { ...item, ...patch };
+    if (patch.progress) {
+      merged.progress = mergeTranscriptionProgress(item.progress, patch.progress);
+    }
+    return merged;
+  });
   await chrome.storage.local.set({ [HISTORY_KEY]: next });
 }
 

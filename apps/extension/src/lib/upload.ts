@@ -152,13 +152,31 @@ export async function pollRecording(
   }
 
   while (Date.now() - started < timeoutMs) {
-    const response = await fetch(`${settings.apiUrl}/v1/recordings/${id}`, {
-      headers,
-    });
-    if (!response.ok) {
-      throw new Error(`Status check failed (${response.status})`);
+    let meta: RecordingMeta | undefined;
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const response = await fetch(`${settings.apiUrl}/v1/recordings/${id}`, {
+          headers,
+        });
+        if (!response.ok) {
+          throw new Error(`Status check failed (${response.status})`);
+        }
+        meta = (await response.json()) as RecordingMeta;
+        break;
+      } catch (err) {
+        lastError = err;
+        if (attempt < 3) {
+          await sleep(Math.min(intervalMs, 1500) * attempt);
+        }
+      }
     }
-    const meta = (await response.json()) as RecordingMeta;
+
+    if (!meta) {
+      throw lastError instanceof Error ? lastError : new Error(String(lastError));
+    }
+
     opts?.onUpdate?.(meta);
     if (meta.status === "completed" || meta.status === "failed") {
       return meta;

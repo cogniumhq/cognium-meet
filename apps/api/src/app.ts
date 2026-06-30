@@ -254,6 +254,10 @@ export function createApp(deps: AppDeps) {
           ...meta,
           status: "processing",
           error: undefined,
+          progress: meta.progress ?? {
+            phase: "preparing",
+            label: "Resuming transcription…",
+          },
         });
       }
 

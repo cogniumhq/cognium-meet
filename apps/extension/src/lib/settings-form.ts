@@ -52,9 +52,9 @@ export async function initSettingsForm(root: ParentNode): Promise<void> {
 
   els.apiUrlInput.value = settings.apiUrl;
   els.apiTokenInput.value = settings.apiToken;
-  populateTranscriptionModels(els, settings.transcriptionModel);
+  populateTranscriptionModels(els, settings.transcriptionModel, settings.captureMode);
   populateCaptureModes(els, settings.captureMode);
-  updateCaptureModeUi(els);
+  updateCaptureModeUi(els, settings.transcriptionModel);
 
   els.tokenToggleBtn.addEventListener("click", () => {
     const showing = els.apiTokenInput.type === "text";
@@ -182,6 +182,7 @@ async function saveMicDevice(els: SettingsFormElements): Promise<void> {
 function populateTranscriptionModels(
   els: SettingsFormElements,
   selected?: TranscriptionModel,
+  captureMode?: AudioCaptureMode,
 ): void {
   els.transcriptionModelSelect.innerHTML = "";
   for (const model of TRANSCRIPTION_MODELS) {
@@ -190,7 +191,35 @@ function populateTranscriptionModels(
     option.textContent = transcriptionModelLabel(model);
     els.transcriptionModelSelect.appendChild(option);
   }
-  els.transcriptionModelSelect.value = selected ?? DEFAULT_TRANSCRIPTION_MODEL;
+
+  const dual = captureMode === "dual-track";
+  const effective = dual ? "whisper-1" : (selected ?? DEFAULT_TRANSCRIPTION_MODEL);
+  els.transcriptionModelSelect.value = effective;
+  applyTranscriptionModelAvailability(els, dual);
+}
+
+function applyTranscriptionModelAvailability(
+  els: SettingsFormElements,
+  dual: boolean,
+): void {
+  for (const option of els.transcriptionModelSelect.options) {
+    const isDiarize = option.value === "gpt-4o-transcribe-diarize";
+    option.disabled = dual && isDiarize;
+    option.hidden = dual && isDiarize;
+  }
+
+  if (dual) {
+    els.transcriptionModelSelect.value = "whisper-1";
+    els.transcriptionModelSelect.disabled = true;
+    els.transcriptionModelSelect.setAttribute(
+      "aria-description",
+      "Dual-track always uses Whisper for You and Others labels",
+    );
+    return;
+  }
+
+  els.transcriptionModelSelect.disabled = false;
+  els.transcriptionModelSelect.removeAttribute("aria-description");
 }
 
 function populateCaptureModes(
@@ -207,12 +236,20 @@ function populateCaptureModes(
   els.captureModeSelect.value = selected ?? "mixed";
 }
 
-function updateCaptureModeUi(els: SettingsFormElements): void {
+function updateCaptureModeUi(
+  els: SettingsFormElements,
+  savedTranscriptionModel?: TranscriptionModel,
+): void {
   const dual = els.captureModeSelect.value === "dual-track";
   els.dualTrackNote.classList.toggle("hidden", !dual);
   els.micHint.textContent = dual
     ? "Tab and mic are recorded as separate files. Your mic is labeled You; tab audio is Others. Allow mic and pick a device below."
     : "Tab audio is always recorded. Your mic is mixed in so your voice is included. Chrome ignores Linux/GNOME input settings — pick the device below.";
+
+  applyTranscriptionModelAvailability(els, dual);
+  if (!dual && savedTranscriptionModel) {
+    els.transcriptionModelSelect.value = savedTranscriptionModel;
+  }
 }
 
 async function saveCaptureMode(els: SettingsFormElements): Promise<void> {
@@ -222,11 +259,14 @@ async function saveCaptureMode(els: SettingsFormElements): Promise<void> {
     ...settings,
     captureMode,
   });
-  updateCaptureModeUi(els);
+  updateCaptureModeUi(els, settings.transcriptionModel);
   setSaveStatus(els, "Capture mode saved.", false);
 }
 
 async function saveTranscriptionModel(els: SettingsFormElements): Promise<void> {
+  if (els.captureModeSelect.value === "dual-track") {
+    return;
+  }
   const settings = await getSettings();
   const model = els.transcriptionModelSelect.value as TranscriptionModel;
   await saveSettings({
@@ -238,14 +278,18 @@ async function saveTranscriptionModel(els: SettingsFormElements): Promise<void> 
 
 async function saveApiSettings(els: SettingsFormElements): Promise<void> {
   const settings = await getSettings();
+  const captureMode =
+    (els.captureModeSelect.value as AudioCaptureMode) || settings.captureMode;
+  const transcriptionModel =
+    captureMode === "dual-track"
+      ? settings.transcriptionModel
+      : ((els.transcriptionModelSelect.value as TranscriptionModel) ||
+          settings.transcriptionModel);
   await saveSettings({
     apiUrl: els.apiUrlInput.value.replace(/\/$/, ""),
     apiToken: els.apiTokenInput.value,
-    transcriptionModel:
-      (els.transcriptionModelSelect.value as TranscriptionModel) ||
-      settings.transcriptionModel,
-    captureMode:
-      (els.captureModeSelect.value as AudioCaptureMode) || settings.captureMode,
+    transcriptionModel,
+    captureMode,
     microphoneDeviceId: els.micDeviceSelect.disabled
       ? settings.microphoneDeviceId
       : els.micDeviceSelect.value || undefined,

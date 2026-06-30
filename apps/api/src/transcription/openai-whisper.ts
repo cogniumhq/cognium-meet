@@ -173,7 +173,7 @@ export class OpenAIWhisperProvider implements TranscriptionProvider {
       });
       const started = Date.now();
       try {
-        const { data, response: raw } = await this.client.audio.transcriptions
+        const { data, request_id } = await this.client.audio.transcriptions
           .create({
             file,
             model,
@@ -188,7 +188,7 @@ export class OpenAIWhisperProvider implements TranscriptionProvider {
           model,
           part: opts?.part,
           elapsedMs: Date.now() - started,
-          requestId: raw.headers.get("x-request-id") ?? undefined,
+          requestId: request_id ?? undefined,
           detail: `segments=${data.segments?.length ?? 0}`,
         });
         return data;

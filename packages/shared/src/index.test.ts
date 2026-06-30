@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatTimestamp,
+  mergeTranscriptionProgress,
   parseAudioCaptureMode,
   parseTranscriptionModel,
   segmentsToPlainText,
@@ -110,6 +111,64 @@ describe("transcriptionProgressLabel", () => {
     );
     expect(label).toContain("part 1/2");
     expect(label).toContain("of 22 min");
+  });
+});
+
+describe("mergeTranscriptionProgress", () => {
+  it("keeps timing fields when a part-finished snapshot omits partStartedAt", () => {
+    const during = {
+      phase: "transcribing" as const,
+      profile: "diarize" as const,
+      step: 1,
+      totalSteps: 2,
+      totalAudioSeconds: 300,
+      completedAudioSeconds: 0,
+      partAudioSeconds: 240,
+      partStartedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const finished = {
+      phase: "transcribing" as const,
+      step: 1,
+      totalSteps: 2,
+      label: "Part 1/2 finished",
+      completedAudioSeconds: 240,
+      totalAudioSeconds: 300,
+      partAudioSeconds: 240,
+    };
+
+    const merged = mergeTranscriptionProgress(during, finished);
+    expect(merged.completedAudioSeconds).toBe(240);
+    expect(merged.partStartedAt).toBeUndefined();
+    expect(
+      transcriptionProgressPercent(merged, Date.parse("2026-01-01T00:00:00.000Z")),
+    ).toBeGreaterThan(50);
+  });
+
+  it("resets partStartedAt when advancing to the next step", () => {
+    const part1 = {
+      phase: "transcribing" as const,
+      step: 1,
+      totalSteps: 2,
+      totalAudioSeconds: 300,
+      completedAudioSeconds: 240,
+      partAudioSeconds: 240,
+      partStartedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const part2 = {
+      phase: "transcribing" as const,
+      step: 2,
+      totalSteps: 2,
+      label: "Transcribing part 2/2…",
+      totalAudioSeconds: 300,
+      completedAudioSeconds: 240,
+      partAudioSeconds: 60,
+      partStartedAt: "2026-01-01T00:40:00.000Z",
+    };
+
+    const merged = mergeTranscriptionProgress(part1, part2);
+    expect(merged.step).toBe(2);
+    expect(merged.partStartedAt).toBe("2026-01-01T00:40:00.000Z");
+    expect(merged.completedAudioSeconds).toBe(240);
   });
 });
 

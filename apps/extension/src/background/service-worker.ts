@@ -31,6 +31,7 @@ export {};
 
 let recordingState: PersistedRecordingState = { isRecording: false };
 let isFinalizingRecording = false;
+const activeTranscriptionPolls = new Set<string>();
 
 interface OffscreenStopResponse {
   type: string;
@@ -97,6 +98,17 @@ async function handleMessage(
         message as { localAudioId?: string },
         sendResponse,
       );
+      return;
+    }
+
+    if (message.type === "TRACK_TRANSCRIPTION") {
+      const id = (message as { recordingId?: string }).recordingId;
+      if (!id) {
+        sendResponse({ ok: false, error: "Missing recording id" });
+        return;
+      }
+      void trackTranscription(id);
+      sendResponse({ ok: true });
       return;
     }
 
@@ -295,16 +307,16 @@ async function handleCaptureEndedWithLocalAudio(message: {
   if (isFinalizingRecording) {
     return;
   }
-
-  const stored = await loadRecordingState();
-  recordingState = stored;
-
-  if (!stored.isRecording && !message.localAudioId) {
-    return;
-  }
-
   isFinalizingRecording = true;
+
   try {
+    const stored = await loadRecordingState();
+    recordingState = stored;
+
+    if (!stored.isRecording) {
+      return;
+    }
+
     const startedAt = stored.startedAt ?? Date.now();
     const durationMs = Date.now() - startedAt;
     const meetingTitle = stored.meetingTitle;
@@ -414,15 +426,15 @@ async function stopRecordingAndFinalize(opts?: {
   if (isFinalizingRecording) {
     return null;
   }
-
-  const status = await loadRecordingState();
-  if (!status.isRecording && !opts?.force && !opts?.capturedAudio) {
-    return null;
-  }
-  recordingState = status;
-
   isFinalizingRecording = true;
+
   try {
+    const status = await loadRecordingState();
+    if (!status.isRecording && !opts?.force && !opts?.capturedAudio) {
+      return null;
+    }
+    recordingState = status;
+
     const startedAt = opts?.startedAt ?? status.startedAt ?? Date.now();
     const durationMs = Date.now() - startedAt;
     const meetingTitle = opts?.meetingTitle ?? status.meetingTitle;
@@ -899,6 +911,10 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function trackTranscription(id: string): Promise<void> {
+  if (activeTranscriptionPolls.has(id)) {
+    return;
+  }
+  activeTranscriptionPolls.add(id);
   try {
     const meta = await pollRecording(id, {
       intervalMs: 3000,
@@ -922,6 +938,8 @@ async function trackTranscription(id: string): Promise<void> {
       error: err instanceof Error ? err.message : String(err),
       progress: undefined,
     });
+  } finally {
+    activeTranscriptionPolls.delete(id);
   }
 }
 

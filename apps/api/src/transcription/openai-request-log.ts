@@ -9,10 +9,33 @@ export function formatAudioBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 }
 
-export function openaiRequestId(
-  headers: Headers | undefined | null,
-): string | undefined {
-  return headers?.get("x-request-id") ?? undefined;
+type HeaderLike =
+  | Headers
+  | Record<string, string | string[] | undefined>
+  | undefined
+  | null;
+
+export function openaiRequestId(headers: HeaderLike): string | undefined {
+  if (!headers) {
+    return undefined;
+  }
+  if (typeof (headers as Headers).get === "function") {
+    return (headers as Headers).get("x-request-id") ?? undefined;
+  }
+  if (typeof headers === "object") {
+    const record = headers as Record<string, string | string[] | undefined>;
+    const value =
+      record["x-request-id"] ??
+      record["X-Request-Id"] ??
+      record["X-REQUEST-ID"];
+    if (typeof value === "string") {
+      return value;
+    }
+    if (Array.isArray(value)) {
+      return value[0];
+    }
+  }
+  return undefined;
 }
 
 function partSuffix(part?: OpenAIPartLabel): string {
@@ -61,7 +84,7 @@ export function logOpenAIRequestFailed(opts: {
 }): void {
   const requestId =
     opts.err instanceof OpenAI.APIError
-      ? openaiRequestId(opts.err.headers)
+      ? opts.err.request_id ?? openaiRequestId(opts.err.headers)
       : undefined;
   const id = requestId ? ` request-id=${requestId}` : "";
   const message = opts.err instanceof Error ? opts.err.message : String(opts.err);

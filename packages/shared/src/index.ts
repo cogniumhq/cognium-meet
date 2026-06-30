@@ -218,6 +218,69 @@ function totalAudioSeconds(progress: TranscriptionProgress): number {
   return Math.max(1, part * steps);
 }
 
+/** Combine progress snapshots so partial API updates do not drop timing fields. */
+export function mergeTranscriptionProgress(
+  previous: TranscriptionProgress | undefined,
+  incoming: TranscriptionProgress,
+): TranscriptionProgress {
+  if (!previous) {
+    return { ...incoming };
+  }
+
+  const merged: TranscriptionProgress = {
+    ...previous,
+    ...incoming,
+    updatedAt: incoming.updatedAt ?? previous.updatedAt,
+  };
+
+  const prevDone = previous.completedAudioSeconds ?? 0;
+  const nextDone = incoming.completedAudioSeconds ?? 0;
+  merged.completedAudioSeconds = Math.max(prevDone, nextDone);
+
+  if (incoming.totalAudioSeconds === undefined) {
+    merged.totalAudioSeconds = previous.totalAudioSeconds;
+  }
+  if (incoming.partAudioSeconds === undefined) {
+    merged.partAudioSeconds = previous.partAudioSeconds;
+  }
+  if (incoming.profile === undefined) {
+    merged.profile = previous.profile;
+  }
+  if (incoming.totalSteps === undefined) {
+    merged.totalSteps = previous.totalSteps;
+  }
+  if (incoming.step === undefined) {
+    merged.step = previous.step;
+  }
+
+  const stepAdvanced =
+    incoming.step !== undefined &&
+    previous.step !== undefined &&
+    incoming.step > previous.step;
+  const partFinished = incoming.label?.includes("finished") ?? false;
+
+  if (partFinished) {
+    merged.partStartedAt = undefined;
+    return merged;
+  }
+
+  if (stepAdvanced) {
+    merged.partStartedAt =
+      incoming.partStartedAt ?? incoming.updatedAt ?? new Date().toISOString();
+    return merged;
+  }
+
+  if (
+    incoming.phase === "transcribing" &&
+    !incoming.partStartedAt &&
+    previous.partStartedAt
+  ) {
+    merged.partStartedAt = previous.partStartedAt;
+  }
+
+  return merged;
+}
+
 /** Map API progress to 0–100; optional nowMs for smooth in-part estimates between polls. */
 export function transcriptionProgressPercent(
   progress: TranscriptionProgress | undefined,
