@@ -1,4 +1,10 @@
-import { listAudioInputDevices } from "./audio-devices.js";
+import { listAudioInputDevices, type AudioInputDevice } from "./audio-devices.js";
+import {
+  listMicDevicesViaBackground,
+  micDevicesLookGranted,
+  openExtensionMicSettings,
+  requestMicAccessViaBackground,
+} from "./mic-access.js";
 import { getSettings, saveSettings } from "./storage.js";
 import {
   AUDIO_CAPTURE_MODES,
@@ -18,8 +24,10 @@ export interface SettingsFormElements {
   saveStatus: HTMLElement;
   micBadge: HTMLElement;
   micBtn: HTMLButtonElement;
+  micSettingsBtn: HTMLButtonElement;
   micDeviceSelect: HTMLSelectElement;
   micHint: HTMLElement;
+  micBlockedHint: HTMLElement;
   transcriptionModelSelect: HTMLSelectElement;
   captureModeSelect: HTMLSelectElement;
   captureModeHint: HTMLElement;
@@ -35,8 +43,10 @@ export function getSettingsFormElements(root: ParentNode): SettingsFormElements 
     saveStatus: root.querySelector("#save-status") as HTMLElement,
     micBadge: root.querySelector("#mic-badge") as HTMLElement,
     micBtn: root.querySelector("#mic-btn") as HTMLButtonElement,
+    micSettingsBtn: root.querySelector("#mic-settings-btn") as HTMLButtonElement,
     micDeviceSelect: root.querySelector("#mic-device") as HTMLSelectElement,
     micHint: root.querySelector("#mic-hint") as HTMLElement,
+    micBlockedHint: root.querySelector("#mic-blocked-hint") as HTMLElement,
     transcriptionModelSelect: root.querySelector(
       "#transcription-model",
     ) as HTMLSelectElement,
@@ -65,6 +75,7 @@ export async function initSettingsForm(root: ParentNode): Promise<void> {
 
   els.saveBtn.addEventListener("click", () => void saveApiSettings(els));
   els.micBtn.addEventListener("click", () => void requestMic(els));
+  els.micSettingsBtn.addEventListener("click", () => openExtensionMicSettings());
   els.micDeviceSelect.addEventListener("change", () => void saveMicDevice(els));
   els.transcriptionModelSelect.addEventListener("change", () =>
     void saveTranscriptionModel(els),
@@ -82,18 +93,30 @@ async function refreshMicPermission(els: SettingsFormElements): Promise<boolean>
     const status = await navigator.permissions.query({
       name: "microphone" as PermissionName,
     });
+    status.onchange = () => {
+      void refreshMicPermission(els);
+    };
     if (status.state === "granted") {
       setMicBadge(els, "granted");
       return true;
     }
-    if (status.state === "denied") {
-      setMicBadge(els, "denied");
-      return false;
-    }
   } catch {
-    // permissions.query may not support "microphone"
+    // permissions.query may not support "microphone" in this context.
   }
 
+  try {
+    const devices = await listMicDevicesViaBackground();
+    if (micDevicesLookGranted(devices)) {
+      setMicBadge(els, "granted");
+      await populateMicDevices(els, (await getSettings()).microphoneDeviceId ?? "");
+      return true;
+    }
+  } catch {
+    // Offscreen may not be ready yet.
+  }
+
+  // Don't show "Blocked" from permissions.query alone — Chrome often reports
+  // denied for extensions before the first successful Allow click.
   setMicBadge(els, "unknown");
   return false;
 }
@@ -103,6 +126,8 @@ function setMicBadge(
   state: "granted" | "denied" | "unknown",
 ): void {
   els.micBadge.classList.remove("mic-badge--granted", "mic-badge--denied", "mic-badge--unknown");
+  els.micBlockedHint.classList.add("hidden");
+  els.micSettingsBtn.classList.add("hidden");
   if (state === "granted") {
     els.micBadge.textContent = "Allowed";
     els.micBadge.classList.add("mic-badge--granted");
@@ -115,7 +140,9 @@ function setMicBadge(
   if (state === "denied") {
     els.micBadge.textContent = "Blocked";
     els.micBadge.classList.add("mic-badge--denied");
-    els.micBtn.textContent = "Allow microphone";
+    els.micBtn.textContent = "Re-check access";
+    els.micBlockedHint.classList.remove("hidden");
+    els.micSettingsBtn.classList.remove("hidden");
     return;
   }
 
@@ -127,19 +154,41 @@ function setMicBadge(
 async function requestMic(els: SettingsFormElements): Promise<void> {
   els.micBtn.disabled = true;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    stream.getTracks().forEach((track) => track.stop());
+    let granted = false;
+    let lastError = "";
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((track) => track.stop());
+      granted = true;
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+    }
+
+    if (!granted) {
+      const offscreen = await requestMicAccessViaBackground();
+      if (offscreen.ok) {
+        granted = true;
+      } else if (offscreen.error) {
+        lastError = offscreen.error;
+      }
+    }
+
+    if (!granted) {
+      const denied = /not allowed|permission|denied|dismissed/i.test(lastError);
+      setMicBadge(els, denied ? "denied" : "unknown");
+      if (!denied) {
+        setSaveStatus(els, lastError || "Could not open microphone", true);
+      } else {
+        els.saveStatus.classList.add("hidden");
+      }
+      return;
+    }
+
     setMicBadge(els, "granted");
     setSaveStatus(els, "Microphone allowed — choose your device below.", false);
     const settings = await getSettings();
     await populateMicDevices(els, settings.microphoneDeviceId ?? "");
-  } catch (err) {
-    setMicBadge(els, "denied");
-    setSaveStatus(
-      els,
-      err instanceof Error ? err.message : "Microphone access denied",
-      true,
-    );
   } finally {
     els.micBtn.disabled = false;
   }
@@ -149,7 +198,10 @@ async function populateMicDevices(
   els: SettingsFormElements,
   selectedId: string,
 ): Promise<void> {
-  const devices = await listAudioInputDevices();
+  let devices: AudioInputDevice[] = await listMicDevicesViaBackground().catch(() => []);
+  if (devices.length === 0) {
+    devices = await listAudioInputDevices();
+  }
   els.micDeviceSelect.innerHTML = "";
 
   const defaultOption = document.createElement("option");

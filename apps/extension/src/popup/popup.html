@@ -115,8 +115,18 @@
 
             <div class="mic-row">
               <span id="mic-badge" class="mic-badge mic-badge--unknown">Not set</span>
-              <button id="mic-btn" type="button" class="mic-btn">Allow microphone</button>
+              <div class="mic-actions">
+                <button id="mic-btn" type="button" class="mic-btn">Allow microphone</button>
+                <button id="mic-settings-btn" type="button" class="mic-btn mic-btn--link hidden">
+                  Extension mic settings
+                </button>
+              </div>
             </div>
+            <p id="mic-blocked-hint" class="mic-blocked-hint hidden">
+              This extension won't appear on the website microphone list. Click
+              <strong>Extension mic settings</strong>, set Microphone to Allow, then
+              <strong>Re-check access</strong>.
+            </p>
 
             <div class="field">
               <label for="mic-device">Recording device</label>

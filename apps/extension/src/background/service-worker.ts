@@ -146,11 +146,70 @@ async function handleMessage(
       return;
     }
 
+    if (message.type === "LIST_MIC_DEVICES") {
+      await handleListMicDevices(sendResponse);
+      return;
+    }
+
+    if (message.type === "REQUEST_MIC_ACCESS") {
+      await handleRequestMicAccess(
+        message as { deviceId?: string },
+        sendResponse,
+      );
+      return;
+    }
+
     sendResponse({ type: "RECORDING_ERROR", error: "Unknown message" });
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     await setRecordingState({ ...recordingState, isRecording: false, lastError: error });
     sendResponse({ type: "RECORDING_ERROR", error });
+  }
+}
+
+async function handleListMicDevices(
+  sendResponse: (response: unknown) => void,
+): Promise<void> {
+  try {
+    await ensureOffscreenDocument();
+    const response = await sendToOffscreen<{
+      type: string;
+      devices?: { deviceId: string; label: string }[];
+    }>({ type: "OFFSCREEN_LIST_DEVICES" });
+    sendResponse({ devices: response.devices ?? [] });
+  } catch (err) {
+    sendResponse({
+      error: err instanceof Error ? err.message : String(err),
+      devices: [],
+    });
+  }
+}
+
+async function handleRequestMicAccess(
+  message: { deviceId?: string },
+  sendResponse: (response: unknown) => void,
+): Promise<void> {
+  try {
+    await ensureOffscreenDocument();
+    const response = await sendToOffscreen<{
+      type: string;
+      ok?: boolean;
+      error?: string;
+      label?: string;
+    }>({
+      type: "OFFSCREEN_REQUEST_MIC",
+      micDeviceId: message.deviceId,
+    });
+    sendResponse({
+      ok: response.ok ?? response.type === "MIC_ACCESS_GRANTED",
+      error: response.error,
+      label: response.label,
+    });
+  } catch (err) {
+    sendResponse({
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 
@@ -847,6 +906,8 @@ async function sendToOffscreen<T>(
     micDeviceId?: string;
     meetingTitle?: string;
     startedAt?: number;
+    micDeviceId?: string;
+    captureMode?: string;
     reason?: "tab_closed" | "capture_ended";
   },
   opts?: { timeoutMs?: number; intervalMs?: number },

@@ -130,9 +130,16 @@
 
 .mic-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
+}
+
+.mic-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
 }
 
 .mic-badge {
@@ -165,6 +172,31 @@
 
 .mic-btn:hover {
   background: #475569;
+}
+
+.mic-btn--link {
+  background: transparent;
+  color: #7eb8ff;
+  font-size: 11px;
+  padding: 4px 0;
+  text-decoration: underline;
+}
+
+.mic-btn--link:hover {
+  background: transparent;
+  color: #a5d0ff;
+}
+
+.mic-blocked-hint {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #94a3b8;
+}
+
+.mic-blocked-hint strong {
+  color: #cbd5e1;
+  font-weight: 600;
 }
 
 .save-status {

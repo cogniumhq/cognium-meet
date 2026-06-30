@@ -203,6 +203,22 @@ async function handleMessage(
       return;
     }
 
+    if (message.type === "OFFSCREEN_REQUEST_MIC") {
+      try {
+        const stream = await openMicStream(message.micDeviceId);
+        const label = micTrackLabel(stream);
+        stream.getTracks().forEach((track) => track.stop());
+        sendResponse({ type: "MIC_ACCESS_GRANTED", ok: true, label });
+      } catch (err) {
+        sendResponse({
+          type: "MIC_ACCESS_DENIED",
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      return;
+    }
+
     if (message.type === "OFFSCREEN_FLUSH") {
       void flushRecordingOnCaptureEnd(message.reason ?? "tab_closed");
       sendResponse({ ok: true });
