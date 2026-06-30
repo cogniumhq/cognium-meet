@@ -10,12 +10,12 @@
   <body>
     <main class="container">
       <div id="main-view">
-        <header>
+        <header class="app-header">
           <h1>Cognium Meet</h1>
           <p class="subtitle">Record &amp; transcribe the active tab</p>
         </header>
 
-        <section id="status-section">
+        <section id="status-section" class="status-card">
           <div id="recording-indicator" class="hidden">
             <span class="dot"></span>
             <span id="timer">00:00</span>
@@ -45,12 +45,12 @@
           <button id="stop-btn" type="button" class="hidden danger">Stop &amp; transcribe</button>
         </div>
 
-        <section id="history-section">
+        <section id="history-section" class="history-panel">
           <div class="history-header">
             <h2>Recent transcripts</h2>
-            <button id="settings-open-btn" type="button" class="text-link">Settings</button>
+            <button id="settings-open-btn" type="button" class="text-link settings-btn">Settings</button>
           </div>
-          <ul id="history-list"></ul>
+          <ul id="history-list" class="history-scroll"></ul>
         </section>
       </div>
 

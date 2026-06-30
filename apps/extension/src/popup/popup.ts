@@ -453,6 +453,44 @@ function setStatus(text: string, isError = false): void {
   statusText.classList.toggle("error", isError);
 }
 
+function statusBadgeLabel(status: string): string {
+  switch (status) {
+    case "completed":
+      return "Done";
+    case "processing":
+      return "Transcribing";
+    case "saved":
+      return "Saved";
+    case "upload_failed":
+      return "Upload failed";
+    case "failed":
+      return "Failed";
+    default:
+      return status;
+  }
+}
+
+function createStatusBadge(status: string): HTMLSpanElement {
+  const badge = document.createElement("span");
+  const safeStatus = status.replace(/[^a-z_]/gi, "");
+  badge.className = `status-badge status-badge--${safeStatus}`;
+  badge.textContent = statusBadgeLabel(status);
+  return badge;
+}
+
+function appendHistoryMeta(li: HTMLLIElement, item: { startedAt: string; status: string }): void {
+  const meta = document.createElement("div");
+  meta.className = "history-meta";
+
+  const date = document.createElement("span");
+  date.className = "history-date";
+  date.textContent = new Date(item.startedAt).toLocaleString();
+
+  meta.appendChild(date);
+  meta.appendChild(createStatusBadge(item.status));
+  li.appendChild(meta);
+}
+
 async function refreshStaleHistory(): Promise<void> {
   const history = await getHistory();
   for (const item of history) {
@@ -630,7 +668,7 @@ function appendLocalAudioActions(
 
   const del = document.createElement("button");
   del.type = "button";
-  del.className = "link-btn danger-link";
+  del.className = "link-btn link-btn--danger";
   del.textContent = "Delete local";
   del.addEventListener("click", () => {
     void deleteLocalRecording(item);
@@ -643,9 +681,16 @@ function appendLocalAudioActions(
 function appendRemoveAction(
   li: HTMLLIElement,
   item: { id: string; meetingTitle?: string; status: string; localAudioId?: string },
+  links?: HTMLDivElement,
 ): void {
-  const links = document.createElement("div");
-  links.className = "history-links";
+  const container =
+    links ??
+    (() => {
+      const el = document.createElement("div");
+      el.className = "history-links";
+      li.appendChild(el);
+      return el;
+    })();
 
   const onServer =
     !item.localAudioId &&
@@ -655,13 +700,12 @@ function appendRemoveAction(
 
   const remove = document.createElement("button");
   remove.type = "button";
-  remove.className = "link-btn danger-link";
+  remove.className = "link-btn link-btn--danger";
   remove.textContent = onServer ? "Delete" : "Remove";
   remove.addEventListener("click", () => {
     void removeFromHistory(item);
   });
-  links.appendChild(remove);
-  li.appendChild(links);
+  container.appendChild(remove);
 }
 
 async function renderHistory(): Promise<void> {
@@ -674,7 +718,8 @@ async function renderHistory(): Promise<void> {
   historyList.innerHTML = "";
   if (history.length === 0) {
     const li = document.createElement("li");
-    li.textContent = "No transcripts yet.";
+    li.className = "history-empty";
+    li.textContent = "No transcripts yet — start a recording above.";
     historyList.appendChild(li);
     return;
   }
@@ -694,13 +739,8 @@ async function renderHistory(): Promise<void> {
     title.className = "history-title";
     title.textContent = item.meetingTitle ?? "Recording";
 
-    const meta = document.createElement("div");
-    meta.className = "history-meta";
-    const when = new Date(item.startedAt).toLocaleString();
-    meta.textContent = `${when} · ${item.status}`;
-
     li.appendChild(title);
-    li.appendChild(meta);
+    appendHistoryMeta(li, item);
 
     if (item.status === "upload_failed" && item.localAudioId) {
       if (item.error) {
@@ -736,7 +776,7 @@ async function renderHistory(): Promise<void> {
       });
       links.appendChild(retry);
       li.appendChild(links);
-      appendRemoveAction(li, item);
+      appendRemoveAction(li, item, links);
     }
 
     if (item.status === "completed") {
@@ -766,7 +806,7 @@ async function renderHistory(): Promise<void> {
       links.appendChild(txt);
       links.appendChild(json);
       li.appendChild(links);
-      appendRemoveAction(li, item);
+      appendRemoveAction(li, item, links);
     }
 
     if (item.status === "processing") {

@@ -57,14 +57,13 @@ export interface RecordingMeta {
 }
 
 export const TRANSCRIPTION_MODELS = [
-  "gpt-4o-transcribe-diarize",
   "whisper-1",
+  "gpt-4o-transcribe-diarize",
 ] as const;
 
 export type TranscriptionModel = (typeof TRANSCRIPTION_MODELS)[number];
 
-export const DEFAULT_TRANSCRIPTION_MODEL: TranscriptionModel =
-  "gpt-4o-transcribe-diarize";
+export const DEFAULT_TRANSCRIPTION_MODEL: TranscriptionModel = "whisper-1";
 
 export function parseTranscriptionModel(
   value: unknown,
