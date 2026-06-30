@@ -12,5 +12,10 @@
   },
   "devDependencies": {
     "typescript": "^5.7.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "fs-extra": "^11.3.0"
+    }
   }
 }

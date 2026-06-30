@@ -28,6 +28,9 @@ const getTranscriptionProvider = createTranscriptionProviderFactory(openaiKey);
 const deleteAudioAfterTranscription =
   process.env.DELETE_AUDIO_AFTER_TRANSCRIPTION !== "false";
 
+const notesEnabled = process.env.MEETING_NOTES_ENABLED !== "false";
+const notesModel = process.env.MEETING_NOTES_MODEL?.trim() || "gpt-4o-mini";
+
 const maxUploadBytes = Number.parseInt(
   process.env.MAX_UPLOAD_BYTES ?? String(150 * 1024 * 1024),
   10,
@@ -38,6 +41,9 @@ const deps = {
   getTranscriptionProvider,
   defaultTranscriptionModel,
   deleteAudioAfterTranscription,
+  openaiApiKey: openaiKey,
+  notesModel,
+  notesEnabled,
   apiToken,
   maxUploadBytes,
 };
@@ -49,4 +55,5 @@ void resumePendingRecordings(deps);
 serve({ fetch: app.fetch, port }, () => {
   console.log(`cognium-meet API listening on http://localhost:${port}`);
   console.log(`Default transcription model: ${defaultTranscriptionModel}`);
+  console.log(`Meeting notes: ${notesEnabled ? `enabled (${notesModel})` : "disabled"}`);
 });

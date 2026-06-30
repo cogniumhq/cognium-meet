@@ -13,6 +13,7 @@ import {
   SPEAKER_OTHERS,
   SPEAKER_YOU,
 } from "./merge-segments.js";
+import { enqueueMeetingNotes, type NotesProcessingDeps } from "../notes/process-notes.js";
 
 async function saveProgress(
   store: RecordingStore,
@@ -32,7 +33,7 @@ async function saveProgress(
   });
 }
 
-export interface ProcessingDeps {
+export interface ProcessingDeps extends NotesProcessingDeps {
   store: RecordingStore;
   getTranscriptionProvider: (model: TranscriptionModel) => TranscriptionProvider;
   defaultTranscriptionModel: TranscriptionModel;
@@ -142,6 +143,8 @@ export async function processRecording(
     error: undefined,
     processingStartedAt: new Date().toISOString(),
     transcriptionModel: model,
+    notesStatus: deps.notesEnabled ? "pending" : "skipped",
+    notesError: undefined,
   });
 
   console.log(
@@ -175,12 +178,16 @@ export async function processRecording(
     processingStartedAt: undefined,
     progress: undefined,
     transcriptionModel: model,
+    notesStatus: deps.notesEnabled ? "pending" : "skipped",
+    notesError: undefined,
   };
   await deps.store.saveMeta(completed);
 
   console.log(
     `[transcription] completed id=${id} segments=${result.segments.length} language=${result.language ?? "?"}`,
   );
+
+  enqueueMeetingNotes(deps, id);
 
   if (deps.deleteAudioAfterTranscription) {
     await deps.store.deleteAudio(id);

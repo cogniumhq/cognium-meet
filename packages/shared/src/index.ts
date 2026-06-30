@@ -39,6 +39,23 @@ export interface TranscriptResult {
   segments: TranscriptSegment[];
 }
 
+export type NotesStatus =
+  | "pending"
+  | "processing"
+  | "completed"
+  | "failed"
+  | "skipped";
+
+export interface MeetingNotes {
+  recordingId: string;
+  meetingTitle?: string;
+  generatedAt: string;
+  summary: string;
+  actionItems: string[];
+  decisions: string[];
+  openQuestions: string[];
+}
+
 export interface RecordingMeta {
   id: string;
   meetingTitle?: string;
@@ -54,6 +71,9 @@ export interface RecordingMeta {
   processingStartedAt?: string;
   /** Present while status is processing */
   progress?: TranscriptionProgress;
+  /** AI meeting notes generation state (after transcript is ready). */
+  notesStatus?: NotesStatus;
+  notesError?: string;
 }
 
 export const TRANSCRIPTION_MODELS = [
@@ -158,6 +178,47 @@ export function segmentsToPlainText(segments: TranscriptSegment[]): string {
       return `[${formatTimestamp(seg.start)}] ${who}${seg.text.trim()}`;
     })
     .join("\n");
+}
+
+export function formatMeetingNotesMarkdown(notes: MeetingNotes): string {
+  const lines: string[] = ["# Meeting notes", ""];
+
+  if (notes.meetingTitle) {
+    lines.push(`**${notes.meetingTitle}**`, "");
+  }
+
+  lines.push("## Summary", "", notes.summary.trim(), "", "## Action items", "");
+  if (notes.actionItems.length === 0) {
+    lines.push("_None identified._", "");
+  } else {
+    for (const item of notes.actionItems) {
+      lines.push(`- ${item.trim()}`);
+    }
+    lines.push("");
+  }
+
+  lines.push("## Decisions", "");
+  if (notes.decisions.length === 0) {
+    lines.push("_None identified._", "");
+  } else {
+    for (const item of notes.decisions) {
+      lines.push(`- ${item.trim()}`);
+    }
+    lines.push("");
+  }
+
+  lines.push("## Open questions", "");
+  if (notes.openQuestions.length === 0) {
+    lines.push("_None identified._", "");
+  } else {
+    for (const item of notes.openQuestions) {
+      lines.push(`- ${item.trim()}`);
+    }
+    lines.push("");
+  }
+
+  lines.push(`_Generated ${notes.generatedAt}_`);
+  return lines.join("\n");
 }
 
 function partElapsedSeconds(progress: TranscriptionProgress, nowMs: number): number {

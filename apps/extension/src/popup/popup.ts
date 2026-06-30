@@ -7,6 +7,7 @@ import {
 } from "@cognium/meet-shared";
 import {
   deleteServerRecording,
+  downloadMeetingNotes,
   downloadTranscript,
   fetchRecordingStatus,
   retryRecording,
@@ -494,7 +495,11 @@ function appendHistoryMeta(li: HTMLLIElement, item: { startedAt: string; status:
 async function refreshStaleHistory(): Promise<void> {
   const history = await getHistory();
   for (const item of history) {
-    if (item.status !== "processing" && item.status !== "failed") {
+    const needsNotesPoll =
+      item.status === "completed" &&
+      !item.localAudioId &&
+      (item.notesStatus === "pending" || item.notesStatus === "processing");
+    if (item.status !== "processing" && item.status !== "failed" && !needsNotesPoll) {
       continue;
     }
     if (item.localAudioId) {
@@ -502,11 +507,18 @@ async function refreshStaleHistory(): Promise<void> {
     }
     try {
       const meta = await fetchRecordingStatus(item.id);
-      if (meta.status !== item.status || meta.error !== item.error || meta.progress) {
+      if (
+        meta.status !== item.status ||
+        meta.error !== item.error ||
+        meta.progress ||
+        meta.notesStatus !== item.notesStatus
+      ) {
         await updateHistoryEntry(item.id, {
           status: meta.status,
           error: meta.error,
           progress: meta.progress,
+          notesStatus: meta.notesStatus,
+          notesError: meta.notesError,
         });
       }
     } catch {
@@ -805,6 +817,28 @@ async function renderHistory(): Promise<void> {
 
       links.appendChild(txt);
       links.appendChild(json);
+
+      if (item.notesStatus === "completed") {
+        const notesMd = document.createElement("button");
+        notesMd.type = "button";
+        notesMd.className = "link-btn";
+        notesMd.textContent = "Meeting notes";
+        notesMd.addEventListener("click", () => {
+          void downloadMeetingNotes(item.id, "md").catch((err) =>
+            setStatus(err instanceof Error ? err.message : String(err), true),
+          );
+        });
+        links.appendChild(notesMd);
+      } else if (
+        item.notesStatus === "pending" ||
+        item.notesStatus === "processing"
+      ) {
+        const pending = document.createElement("span");
+        pending.className = "history-notes-pending";
+        pending.textContent = "Generating notes…";
+        links.appendChild(pending);
+      }
+
       li.appendChild(links);
       appendRemoveAction(li, item, links);
     }

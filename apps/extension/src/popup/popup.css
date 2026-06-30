@@ -379,6 +379,13 @@ button:disabled {
   border-color: rgba(248, 113, 113, 0.25);
 }
 
+.history-notes-pending {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
 .error {
   color: #fca5a5;
 }

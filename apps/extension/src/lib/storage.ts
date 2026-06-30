@@ -1,4 +1,4 @@
-import type { ExtensionSettings, TranscriptionProgress } from "@cognium/meet-shared";
+import type { ExtensionSettings, NotesStatus, TranscriptionProgress } from "@cognium/meet-shared";
 import {
   DEFAULT_API_URL,
   DEFAULT_AUDIO_CAPTURE_MODE,
@@ -36,6 +36,8 @@ export interface StoredRecording {
   /** Local IndexedDB backup when upload has not reached the server yet */
   localAudioId?: string;
   progress?: TranscriptionProgress;
+  notesStatus?: NotesStatus;
+  notesError?: string;
 }
 
 const HISTORY_KEY = "recordingHistory";

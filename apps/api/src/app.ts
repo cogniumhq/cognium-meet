@@ -15,6 +15,7 @@ import {
   isTranscriptionActive,
   type ProcessingDeps,
 } from "./transcription/process-recording.js";
+import { enqueueMeetingNotes } from "./notes/process-notes.js";
 import { requestLog } from "./middleware/request-log.js";
 
 interface AppDeps extends ProcessingDeps {
@@ -230,6 +231,8 @@ export function createApp(deps: AppDeps) {
       error: undefined,
       transcriptionModel: retryModel,
       processingStartedAt: new Date().toISOString(),
+      notesStatus: deps.notesEnabled ? "pending" : "skipped",
+      notesError: undefined,
     });
 
     enqueueTranscription(deps, id);
@@ -307,6 +310,68 @@ export function createApp(deps: AppDeps) {
       return c.json({ error: "Transcript missing" }, 404);
     }
     return c.json(json);
+  });
+
+  app.get("/v1/recordings/:id/notes.json", async (c) => {
+    const id = c.req.param("id");
+    const meta = await deps.store.getMeta(id);
+    if (!meta) {
+      return c.json({ error: "Not found" }, 404);
+    }
+    if (meta.notesStatus !== "completed") {
+      return c.json(
+        { error: "Meeting notes not ready", notesStatus: meta.notesStatus ?? "pending" },
+        409,
+      );
+    }
+    const notes = await deps.store.readMeetingNotes(id);
+    if (!notes) {
+      return c.json({ error: "Meeting notes missing" }, 404);
+    }
+    return c.json(notes);
+  });
+
+  app.get("/v1/recordings/:id/notes.md", async (c) => {
+    const id = c.req.param("id");
+    const meta = await deps.store.getMeta(id);
+    if (!meta) {
+      return c.json({ error: "Not found" }, 404);
+    }
+    if (meta.notesStatus !== "completed") {
+      return c.json(
+        { error: "Meeting notes not ready", notesStatus: meta.notesStatus ?? "pending" },
+        409,
+      );
+    }
+    const md = await deps.store.readMeetingNotesMd(id);
+    if (!md) {
+      return c.json({ error: "Meeting notes missing" }, 404);
+    }
+    return c.text(md, 200, {
+      "Content-Type": "text/markdown; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${id}-notes.md"`,
+    });
+  });
+
+  app.post("/v1/recordings/:id/notes", async (c) => {
+    const id = c.req.param("id");
+    const meta = await deps.store.getMeta(id);
+    if (!meta) {
+      return c.json({ error: "Not found" }, 404);
+    }
+    if (meta.status !== "completed") {
+      return c.json({ error: "Transcript not ready", status: meta.status }, 409);
+    }
+    if (!deps.notesEnabled) {
+      return c.json({ error: "Meeting notes are disabled on this server" }, 503);
+    }
+    await deps.store.saveMeta({
+      ...meta,
+      notesStatus: "pending",
+      notesError: undefined,
+    });
+    enqueueMeetingNotes(deps, id);
+    return c.json({ id, notesStatus: "pending" }, 202);
   });
 
   app.delete("/v1/recordings/:id", async (c) => {

@@ -199,3 +199,23 @@ describe("segmentsToPlainText", () => {
     expect(text).toBe("[00:00:00] Speaker 1: Hello\n[00:00:12] Speaker 2: World");
   });
 });
+
+describe("formatMeetingNotesMarkdown", () => {
+  it("formats sections with bullet lists", async () => {
+    const { formatMeetingNotesMarkdown } = await import("./index.js");
+    const md = formatMeetingNotesMarkdown({
+      recordingId: "abc",
+      meetingTitle: "Standup",
+      generatedAt: "2026-01-01T00:00:00.000Z",
+      summary: "Discussed launch timeline.",
+      actionItems: ["Ship v1"],
+      decisions: ["Use Whisper by default"],
+      openQuestions: ["When to enable diarize?"],
+    });
+    expect(md).toContain("# Meeting notes");
+    expect(md).toContain("## Summary");
+    expect(md).toContain("- Ship v1");
+    expect(md).toContain("- Use Whisper by default");
+    expect(md).toContain("- When to enable diarize?");
+  });
+});

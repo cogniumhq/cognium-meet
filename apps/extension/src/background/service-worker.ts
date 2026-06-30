@@ -17,7 +17,7 @@ import {
   updateHistoryEntry,
   type StoredRecording,
 } from "../lib/storage.js";
-import { pollRecording, uploadRecording } from "../lib/upload.js";
+import { fetchRecordingStatus, pollRecording, uploadRecording } from "../lib/upload.js";
 import {
   deletePendingAudio,
   loadPendingAudio,
@@ -985,6 +985,8 @@ async function trackTranscription(id: string): Promise<void> {
           status: update.status,
           error: update.error,
           progress: update.progress,
+          notesStatus: update.notesStatus,
+          notesError: update.notesError,
         });
       },
     });
@@ -992,7 +994,12 @@ async function trackTranscription(id: string): Promise<void> {
       status: meta.status,
       error: meta.error,
       progress: undefined,
+      notesStatus: meta.notesStatus,
+      notesError: meta.notesError,
     });
+    if (meta.status === "completed" && meta.notesStatus !== "completed" && meta.notesStatus !== "failed" && meta.notesStatus !== "skipped") {
+      void trackMeetingNotes(id);
+    }
   } catch (err) {
     await updateHistoryEntry(id, {
       status: "failed",
@@ -1001,6 +1008,28 @@ async function trackTranscription(id: string): Promise<void> {
     });
   } finally {
     activeTranscriptionPolls.delete(id);
+  }
+}
+
+async function trackMeetingNotes(id: string): Promise<void> {
+  for (let attempt = 0; attempt < 40; attempt++) {
+    try {
+      const meta = await fetchRecordingStatus(id);
+      await updateHistoryEntry(id, {
+        notesStatus: meta.notesStatus,
+        notesError: meta.notesError,
+      });
+      if (
+        meta.notesStatus === "completed" ||
+        meta.notesStatus === "failed" ||
+        meta.notesStatus === "skipped"
+      ) {
+        return;
+      }
+    } catch {
+      // ignore transient poll errors
+    }
+    await sleep(3000);
   }
 }
 

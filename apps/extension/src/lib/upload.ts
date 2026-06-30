@@ -215,6 +215,33 @@ export async function downloadTranscript(
   URL.revokeObjectURL(url);
 }
 
+export async function downloadMeetingNotes(
+  id: string,
+  format: "json" | "md",
+): Promise<void> {
+  const settings = await getSettings();
+  const headers: Record<string, string> = {};
+  if (settings.apiToken) {
+    headers.Authorization = `Bearer ${settings.apiToken}`;
+  }
+
+  const suffix = format === "md" ? "notes.md" : "notes.json";
+  const response = await fetch(`${settings.apiUrl}/v1/recordings/${id}/${suffix}`, {
+    headers,
+  });
+  if (!response.ok) {
+    throw new Error(`Notes download failed (${response.status})`);
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${id}-notes.${format === "md" ? "md" : "json"}`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
