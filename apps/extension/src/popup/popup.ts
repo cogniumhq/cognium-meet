@@ -21,8 +21,11 @@ import {
   findServerProcessingEntry,
   getHistory,
   HISTORY_KEY,
+  loadAskDraft,
   removeHistoryEntry,
+  saveAskDraft,
   updateHistoryEntry,
+  type AskDraftState,
   type StoredRecording,
 } from "../lib/storage.js";
 import { isRecordableTabUrl } from "../lib/recordable-tab.js";
@@ -69,7 +72,9 @@ let displayedPercentFloor = 0;
 let historyRenderGen = 0;
 let currentTranscript: TranscriptResult | undefined;
 let askScopeRecordingId: string | undefined;
+let askScopeMeetingTitle: string | undefined;
 let askRequestGen = 0;
+let askDraftSaveTimer: number | undefined;
 
 void init();
 
@@ -98,13 +103,19 @@ async function init(): Promise<void> {
   transcriptCopyBtn.addEventListener("click", () => void copyTranscript());
   meetingAskBtn.addEventListener("click", () => void runMeetingAsk());
   meetingAskClearScope.addEventListener("click", () => setAskScope());
+  meetingAsk.addEventListener("input", () => scheduleSaveAskDraft());
   meetingAsk.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       void runMeetingAsk();
     }
   });
+  window.addEventListener("pagehide", () => {
+    window.clearTimeout(askDraftSaveTimer);
+    void persistAskDraft();
+  });
   await initSettingsForm(document.getElementById("settings-root")!);
+  await restoreAskDraft();
 
   startBtn.addEventListener("click", () => void startRecording());
   stopOnlyBtn.addEventListener("click", () => void stopRecording(false));
@@ -349,6 +360,7 @@ function showMainView(): void {
 
 function setAskScope(item?: StoredRecording): void {
   askScopeRecordingId = item?.id;
+  askScopeMeetingTitle = item?.meetingTitle;
   if (item) {
     meetingAskLabel.textContent = `Ask about: ${item.meetingTitle ?? "Recording"}`;
     meetingAskClearScope.classList.remove("hidden");
@@ -356,6 +368,71 @@ function setAskScope(item?: StoredRecording): void {
   } else {
     meetingAskLabel.textContent = "Ask about your meetings";
     meetingAskClearScope.classList.add("hidden");
+  }
+  scheduleSaveAskDraft();
+}
+
+function scheduleSaveAskDraft(): void {
+  window.clearTimeout(askDraftSaveTimer);
+  askDraftSaveTimer = window.setTimeout(() => {
+    void persistAskDraft();
+  }, 250);
+}
+
+async function persistAskDraft(overrides?: Partial<AskDraftState>): Promise<void> {
+  const draft: AskDraftState = {
+    question: meetingAsk.value,
+    scopeRecordingId: askScopeRecordingId,
+    scopeMeetingTitle: askScopeMeetingTitle,
+    ...overrides,
+  };
+  if (overrides?.lastAnswer === undefined && overrides?.lastError === undefined) {
+    const existing = await loadAskDraft();
+    if (existing) {
+      draft.lastAnswer = existing.lastAnswer;
+      draft.lastInsufficientContext = existing.lastInsufficientContext;
+      draft.lastCitations = existing.lastCitations;
+      draft.lastError = existing.lastError;
+    }
+  }
+  await saveAskDraft(draft);
+}
+
+async function restoreAskDraft(): Promise<void> {
+  const draft = await loadAskDraft();
+  if (!draft) {
+    return;
+  }
+
+  meetingAsk.value = draft.question;
+  if (draft.scopeRecordingId) {
+    askScopeRecordingId = draft.scopeRecordingId;
+    askScopeMeetingTitle = draft.scopeMeetingTitle;
+    meetingAskLabel.textContent = `Ask about: ${draft.scopeMeetingTitle ?? "Recording"}`;
+    meetingAskClearScope.classList.remove("hidden");
+  }
+
+  if (draft.lastError) {
+    meetingAskResult.classList.remove("hidden");
+    meetingAskResult.innerHTML = "";
+    const error = document.createElement("p");
+    error.className = "meeting-ask-error";
+    error.textContent = draft.lastError;
+    meetingAskResult.appendChild(error);
+    return;
+  }
+
+  if (draft.lastAnswer) {
+    meetingAskResult.classList.remove("hidden");
+    meetingAskResult.innerHTML = "";
+    const answer = document.createElement("div");
+    answer.className = "meeting-ask-answer";
+    if (draft.lastInsufficientContext) {
+      answer.classList.add("meeting-ask-answer--weak");
+    }
+    answer.textContent = draft.lastAnswer;
+    meetingAskResult.appendChild(answer);
+    renderAskCitations(draft.lastCitations ?? []);
   }
 }
 
@@ -438,6 +515,12 @@ async function runMeetingAsk(): Promise<void> {
     answer.textContent = response.answer;
     meetingAskResult.appendChild(answer);
     renderAskCitations(response.citations);
+    await persistAskDraft({
+      lastAnswer: response.answer,
+      lastInsufficientContext: response.insufficientContext,
+      lastCitations: response.citations,
+      lastError: undefined,
+    });
   } catch (err) {
     if (gen !== askRequestGen) {
       return;
@@ -445,8 +528,15 @@ async function runMeetingAsk(): Promise<void> {
     meetingAskResult.innerHTML = "";
     const error = document.createElement("p");
     error.className = "meeting-ask-error";
-    error.textContent = err instanceof Error ? err.message : String(err);
+    const message = err instanceof Error ? err.message : String(err);
+    error.textContent = message;
     meetingAskResult.appendChild(error);
+    await persistAskDraft({
+      lastAnswer: undefined,
+      lastCitations: undefined,
+      lastInsufficientContext: undefined,
+      lastError: message,
+    });
   } finally {
     if (gen === askRequestGen) {
       meetingAskBtn.disabled = false;

@@ -1,4 +1,4 @@
-import type { ExtensionSettings, NotesStatus, TranscriptionProgress } from "@cognium/meet-shared";
+import type { ExtensionSettings, MeetingAskCitation, NotesStatus, TranscriptionProgress } from "@cognium/meet-shared";
 import {
   DEFAULT_API_URL,
   DEFAULT_AUDIO_CAPTURE_MODE,
@@ -54,6 +54,30 @@ export interface StoredRecording {
 }
 
 const HISTORY_KEY = "recordingHistory";
+const ASK_DRAFT_KEY = "meetingAskDraft";
+
+export interface AskDraftState {
+  question: string;
+  scopeRecordingId?: string;
+  scopeMeetingTitle?: string;
+  lastAnswer?: string;
+  lastInsufficientContext?: boolean;
+  lastCitations?: MeetingAskCitation[];
+  lastError?: string;
+}
+
+export async function loadAskDraft(): Promise<AskDraftState | undefined> {
+  const result = await chrome.storage.local.get(ASK_DRAFT_KEY);
+  const draft = result[ASK_DRAFT_KEY] as AskDraftState | undefined;
+  if (!draft || typeof draft.question !== "string") {
+    return undefined;
+  }
+  return draft;
+}
+
+export async function saveAskDraft(draft: AskDraftState): Promise<void> {
+  await chrome.storage.local.set({ [ASK_DRAFT_KEY]: draft });
+}
 
 export { HISTORY_KEY };
 
