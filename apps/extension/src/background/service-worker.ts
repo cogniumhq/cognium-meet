@@ -906,7 +906,6 @@ async function sendToOffscreen<T>(
     micDeviceId?: string;
     meetingTitle?: string;
     startedAt?: number;
-    micDeviceId?: string;
     captureMode?: string;
     reason?: "tab_closed" | "capture_ended";
   },

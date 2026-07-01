@@ -1,10 +1,3 @@
-export function bytesToBlob(bytes: Uint8Array, mimeType: string): Blob {
-  const normalized = mimeType.split(";")[0] || "audio/webm";
-  const copy = new Uint8Array(bytes.byteLength);
-  copy.set(bytes);
-  return new Blob([copy], { type: normalized });
-}
-
 export function blobToBytes(blob: Blob): Promise<Uint8Array> {
   return blob.arrayBuffer().then((buffer) => new Uint8Array(buffer));
 }

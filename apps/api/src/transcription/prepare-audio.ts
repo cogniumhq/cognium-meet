@@ -87,10 +87,6 @@ export function isLikelyAudio(buffer: Buffer): boolean {
   return false;
 }
 
-function mp3PathFor(inputPath: string): string {
-  return inputPath.replace(/\.[^.]+$/i, ".mp3");
-}
-
 export async function prepareAudioForWhisper(inputPath: string): Promise<string> {
   return prepareAudioMp3(inputPath, "48k");
 }
@@ -294,8 +290,4 @@ export function whisperMimeType(audioPath: string): string {
     return "audio/wav";
   }
   return "audio/webm";
-}
-
-export function tempTranscodedPath(recordingsDir: string, id: string): string {
-  return join(recordingsDir, `${id}.mp3`);
 }

@@ -1,4 +1,4 @@
-import type { AudioCaptureMode, MeetingAskRequest, MeetingAskResponse, RecordingMeta, TranscriptResult } from "@cognium/meet-shared";
+import type { MeetingAskRequest, MeetingAskResponse, RecordingMeta, TranscriptResult } from "@cognium/meet-shared";
 import {
   DEFAULT_AUDIO_CAPTURE_MODE,
   DEFAULT_TRANSCRIPTION_MODEL,

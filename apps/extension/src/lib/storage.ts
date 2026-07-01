@@ -1,4 +1,4 @@
-import type { ExtensionSettings, MeetingAskCitation, MeetingAskMessage, NotesStatus, TranscriptionProgress } from "@cognium/meet-shared";
+import type { ExtensionSettings, MeetingAskMessage, NotesStatus, TranscriptionProgress } from "@cognium/meet-shared";
 import {
   DEFAULT_API_URL,
   DEFAULT_AUDIO_CAPTURE_MODE,
@@ -55,7 +55,6 @@ export interface StoredRecording {
 
 const HISTORY_KEY = "recordingHistory";
 const ASK_CHAT_KEY = "meetingAskChat";
-const ASK_DRAFT_KEY = "meetingAskDraft";
 
 export interface AskChatState {
   scopeRecordingId?: string;
@@ -64,52 +63,11 @@ export interface AskChatState {
   draftInput?: string;
 }
 
-/** @deprecated — migrated to AskChatState on load */
-interface LegacyAskDraftState {
-  question: string;
-  scopeRecordingId?: string;
-  scopeMeetingTitle?: string;
-  lastAnswer?: string;
-  lastInsufficientContext?: boolean;
-  lastCitations?: MeetingAskCitation[];
-  lastError?: string;
-}
-
-function migrateLegacyDraft(draft: LegacyAskDraftState): AskChatState {
-  const messages: MeetingAskMessage[] = [];
-  if (draft.question?.trim()) {
-    messages.push({ role: "user", content: draft.question.trim() });
-  }
-  if (draft.lastError) {
-    messages.push({ role: "assistant", content: draft.lastError, isError: true });
-  } else if (draft.lastAnswer) {
-    messages.push({
-      role: "assistant",
-      content: draft.lastAnswer,
-      insufficientContext: draft.lastInsufficientContext,
-      citations: draft.lastCitations,
-    });
-  }
-  return {
-    scopeRecordingId: draft.scopeRecordingId,
-    scopeMeetingTitle: draft.scopeMeetingTitle,
-    messages,
-    draftInput: "",
-  };
-}
-
 export async function loadAskChat(): Promise<AskChatState | undefined> {
-  const result = await chrome.storage.local.get([ASK_CHAT_KEY, ASK_DRAFT_KEY]);
+  const result = await chrome.storage.local.get(ASK_CHAT_KEY);
   const chat = result[ASK_CHAT_KEY] as AskChatState | undefined;
   if (chat && Array.isArray(chat.messages)) {
     return chat;
-  }
-  const legacy = result[ASK_DRAFT_KEY] as LegacyAskDraftState | undefined;
-  if (legacy && typeof legacy.question === "string") {
-    const migrated = migrateLegacyDraft(legacy);
-    await saveAskChat(migrated);
-    await chrome.storage.local.remove(ASK_DRAFT_KEY);
-    return migrated;
   }
   return undefined;
 }
@@ -119,7 +77,7 @@ export async function saveAskChat(state: AskChatState): Promise<void> {
 }
 
 export async function clearAskChat(): Promise<void> {
-  await chrome.storage.local.remove([ASK_CHAT_KEY, ASK_DRAFT_KEY]);
+  await chrome.storage.local.remove(ASK_CHAT_KEY);
 }
 
 export { HISTORY_KEY };

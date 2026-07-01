@@ -8,7 +8,6 @@ import {
 } from "@cognium/meet-shared";
 import type { TranscriptionProvider } from "./provider.js";
 import type { RecordingStore } from "../storage/recording-store.js";
-import type { SearchIndex } from "../storage/search-index.js";
 import { getAudioDurationSeconds } from "./prepare-audio.js";
 import {
   mergeSpeakerSegments,

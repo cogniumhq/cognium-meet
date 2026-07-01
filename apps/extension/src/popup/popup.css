@@ -325,37 +325,6 @@ button:disabled {
   margin-top: 8px;
 }
 
-.meeting-ask-result {
-  margin-bottom: 10px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-}
-
-.meeting-ask-loading {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-.meeting-ask-answer {
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--text);
-  white-space: pre-wrap;
-}
-
-.meeting-ask-answer--weak {
-  color: var(--text-muted);
-}
-
-.meeting-ask-error {
-  margin: 0;
-  font-size: 12px;
-  color: var(--danger);
-}
-
 .meeting-ask-sources-title {
   margin: 10px 0 6px;
   font-size: 11px;
