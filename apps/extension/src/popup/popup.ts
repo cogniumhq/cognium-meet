@@ -1,4 +1,4 @@
-import type { MeetingAskCitation, RecordingMeta, TranscriptResult, TranscriptSegment, TranscriptionProgress } from "@cognium/meet-shared";
+import type { MeetingAskCitation, MeetingAskMessage, RecordingMeta, TranscriptResult, TranscriptSegment, TranscriptionProgress } from "@cognium/meet-shared";
 import {
   formatTimestamp,
   isTranscriptionProgressActive,
@@ -19,13 +19,13 @@ import {
 import { deletePendingAudio, downloadPendingAudio, loadPendingAudio } from "../lib/pending-audio-store.js";
 import {
   findServerProcessingEntry,
+  clearAskChat,
   getHistory,
   HISTORY_KEY,
-  loadAskDraft,
+  loadAskChat,
   removeHistoryEntry,
-  saveAskDraft,
+  saveAskChat,
   updateHistoryEntry,
-  type AskDraftState,
   type StoredRecording,
 } from "../lib/storage.js";
 import { isRecordableTabUrl } from "../lib/recordable-tab.js";
@@ -44,7 +44,10 @@ const meetingAskBtn = document.getElementById("meeting-ask-btn") as HTMLButtonEl
 const meetingAskClearScope = document.getElementById(
   "meeting-ask-clear-scope",
 ) as HTMLButtonElement;
-const meetingAskResult = document.getElementById("meeting-ask-result") as HTMLDivElement;
+const meetingAskClearChat = document.getElementById(
+  "meeting-ask-clear-chat",
+) as HTMLButtonElement;
+const meetingAskThread = document.getElementById("meeting-ask-thread") as HTMLDivElement;
 const mainView = document.getElementById("main-view") as HTMLDivElement;
 const transcriptView = document.getElementById("transcript-view") as HTMLDivElement;
 const settingsView = document.getElementById("settings-view") as HTMLDivElement;
@@ -73,8 +76,10 @@ let historyRenderGen = 0;
 let currentTranscript: TranscriptResult | undefined;
 let askScopeRecordingId: string | undefined;
 let askScopeMeetingTitle: string | undefined;
+let askMessages: MeetingAskMessage[] = [];
 let askRequestGen = 0;
-let askDraftSaveTimer: number | undefined;
+let askChatSaveTimer: number | undefined;
+let askLoading = false;
 
 void init();
 
@@ -103,7 +108,8 @@ async function init(): Promise<void> {
   transcriptCopyBtn.addEventListener("click", () => void copyTranscript());
   meetingAskBtn.addEventListener("click", () => void runMeetingAsk());
   meetingAskClearScope.addEventListener("click", () => setAskScope());
-  meetingAsk.addEventListener("input", () => scheduleSaveAskDraft());
+  meetingAskClearChat.addEventListener("click", () => void clearAskChatUi());
+  meetingAsk.addEventListener("input", () => scheduleSaveAskChat());
   meetingAsk.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -111,11 +117,11 @@ async function init(): Promise<void> {
     }
   });
   window.addEventListener("pagehide", () => {
-    window.clearTimeout(askDraftSaveTimer);
-    void persistAskDraft();
+    window.clearTimeout(askChatSaveTimer);
+    void persistAskChat();
   });
   await initSettingsForm(document.getElementById("settings-root")!);
-  await restoreAskDraft();
+  await restoreAskChat();
 
   startBtn.addEventListener("click", () => void startRecording());
   stopOnlyBtn.addEventListener("click", () => void stopRecording(false));
@@ -359,6 +365,7 @@ function showMainView(): void {
 }
 
 function setAskScope(item?: StoredRecording): void {
+  const prevScope = askScopeRecordingId;
   askScopeRecordingId = item?.id;
   askScopeMeetingTitle = item?.meetingTitle;
   if (item) {
@@ -369,76 +376,63 @@ function setAskScope(item?: StoredRecording): void {
     meetingAskLabel.textContent = "Ask about your meetings";
     meetingAskClearScope.classList.add("hidden");
   }
-  scheduleSaveAskDraft();
+  if (prevScope !== askScopeRecordingId && askMessages.length > 0) {
+    askMessages = [];
+    renderAskThread();
+  }
+  updateAskChrome();
+  void persistAskChat();
 }
 
-function scheduleSaveAskDraft(): void {
-  window.clearTimeout(askDraftSaveTimer);
-  askDraftSaveTimer = window.setTimeout(() => {
-    void persistAskDraft();
+function updateAskChrome(): void {
+  if (askMessages.length > 0 || askLoading) {
+    meetingAskClearChat.classList.remove("hidden");
+  } else {
+    meetingAskClearChat.classList.add("hidden");
+  }
+}
+
+function scheduleSaveAskChat(): void {
+  window.clearTimeout(askChatSaveTimer);
+  askChatSaveTimer = window.setTimeout(() => {
+    void persistAskChat();
   }, 250);
 }
 
-async function persistAskDraft(overrides?: Partial<AskDraftState>): Promise<void> {
-  const draft: AskDraftState = {
-    question: meetingAsk.value,
+async function persistAskChat(): Promise<void> {
+  await saveAskChat({
     scopeRecordingId: askScopeRecordingId,
     scopeMeetingTitle: askScopeMeetingTitle,
-    ...overrides,
-  };
-  if (overrides?.lastAnswer === undefined && overrides?.lastError === undefined) {
-    const existing = await loadAskDraft();
-    if (existing) {
-      draft.lastAnswer = existing.lastAnswer;
-      draft.lastInsufficientContext = existing.lastInsufficientContext;
-      draft.lastCitations = existing.lastCitations;
-      draft.lastError = existing.lastError;
-    }
-  }
-  await saveAskDraft(draft);
+    messages: askMessages,
+    draftInput: meetingAsk.value,
+  });
 }
 
-async function restoreAskDraft(): Promise<void> {
-  const draft = await loadAskDraft();
-  if (!draft) {
+async function restoreAskChat(): Promise<void> {
+  const chat = await loadAskChat();
+  if (!chat) {
     return;
   }
 
-  meetingAsk.value = draft.question;
-  if (draft.scopeRecordingId) {
-    askScopeRecordingId = draft.scopeRecordingId;
-    askScopeMeetingTitle = draft.scopeMeetingTitle;
-    meetingAskLabel.textContent = `Ask about: ${draft.scopeMeetingTitle ?? "Recording"}`;
+  askMessages = chat.messages ?? [];
+  meetingAsk.value = chat.draftInput ?? "";
+  if (chat.scopeRecordingId) {
+    askScopeRecordingId = chat.scopeRecordingId;
+    askScopeMeetingTitle = chat.scopeMeetingTitle;
+    meetingAskLabel.textContent = `Ask about: ${chat.scopeMeetingTitle ?? "Recording"}`;
     meetingAskClearScope.classList.remove("hidden");
   }
-
-  if (draft.lastError) {
-    meetingAskResult.classList.remove("hidden");
-    meetingAskResult.innerHTML = "";
-    const error = document.createElement("p");
-    error.className = "meeting-ask-error";
-    error.textContent = draft.lastError;
-    meetingAskResult.appendChild(error);
-    return;
-  }
-
-  if (draft.lastAnswer) {
-    meetingAskResult.classList.remove("hidden");
-    meetingAskResult.innerHTML = "";
-    const answer = document.createElement("div");
-    answer.className = "meeting-ask-answer";
-    if (draft.lastInsufficientContext) {
-      answer.classList.add("meeting-ask-answer--weak");
-    }
-    answer.textContent = draft.lastAnswer;
-    meetingAskResult.appendChild(answer);
-    renderAskCitations(draft.lastCitations ?? []);
-  }
+  renderAskThread();
+  updateAskChrome();
 }
 
-function clearAskResult(): void {
-  meetingAskResult.innerHTML = "";
-  meetingAskResult.classList.add("hidden");
+async function clearAskChatUi(): Promise<void> {
+  askMessages = [];
+  askLoading = false;
+  meetingAsk.value = "";
+  renderAskThread();
+  updateAskChrome();
+  await clearAskChat();
 }
 
 function citationToRecording(citation: MeetingAskCitation): StoredRecording {
@@ -451,7 +445,7 @@ function citationToRecording(citation: MeetingAskCitation): StoredRecording {
   };
 }
 
-function renderAskCitations(citations: MeetingAskCitation[]): void {
+function appendCitationButtons(parent: HTMLElement, citations: MeetingAskCitation[]): void {
   if (citations.length === 0) {
     return;
   }
@@ -459,8 +453,8 @@ function renderAskCitations(citations: MeetingAskCitation[]): void {
   const heading = document.createElement("p");
   heading.className = "meeting-ask-sources-title";
   heading.textContent =
-    citations.length === 1 ? "Source meeting" : `Source meetings (${citations.length})`;
-  meetingAskResult.appendChild(heading);
+    citations.length === 1 ? "Sources" : `Sources (${citations.length})`;
+  parent.appendChild(heading);
 
   const list = document.createElement("ul");
   list.className = "meeting-ask-sources";
@@ -479,67 +473,100 @@ function renderAskCitations(citations: MeetingAskCitation[]): void {
     list.appendChild(li);
   }
 
-  meetingAskResult.appendChild(list);
+  parent.appendChild(list);
+}
+
+function renderAskThread(): void {
+  meetingAskThread.innerHTML = "";
+
+  if (askMessages.length === 0 && !askLoading) {
+    meetingAskThread.classList.add("hidden");
+    return;
+  }
+
+  meetingAskThread.classList.remove("hidden");
+
+  for (const message of askMessages) {
+    const bubble = document.createElement("div");
+    bubble.className = `meeting-ask-bubble meeting-ask-bubble--${message.role}`;
+    if (message.role === "assistant") {
+      if (message.isError) {
+        bubble.classList.add("meeting-ask-bubble--error");
+      } else if (message.insufficientContext) {
+        bubble.classList.add("meeting-ask-bubble--weak");
+      }
+    }
+
+    const text = document.createElement("div");
+    text.className = "meeting-ask-bubble-text";
+    text.textContent = message.content;
+    bubble.appendChild(text);
+
+    if (message.role === "assistant" && message.citations?.length) {
+      appendCitationButtons(bubble, message.citations);
+    }
+
+    meetingAskThread.appendChild(bubble);
+  }
+
+  if (askLoading) {
+    const loading = document.createElement("div");
+    loading.className = "meeting-ask-bubble meeting-ask-bubble--assistant meeting-ask-bubble--loading";
+    loading.textContent = "Thinking…";
+    meetingAskThread.appendChild(loading);
+  }
+
+  meetingAskThread.scrollTop = meetingAskThread.scrollHeight;
 }
 
 async function runMeetingAsk(): Promise<void> {
   const question = meetingAsk.value.trim();
-  if (!question) {
+  if (!question || askLoading) {
     return;
   }
 
   const gen = ++askRequestGen;
+  askMessages.push({ role: "user", content: question });
+  meetingAsk.value = "";
+  askLoading = true;
   meetingAskBtn.disabled = true;
-  meetingAskResult.classList.remove("hidden");
-  meetingAskResult.innerHTML = "";
-  const loading = document.createElement("p");
-  loading.className = "meeting-ask-loading";
-  loading.textContent = "Thinking…";
-  meetingAskResult.appendChild(loading);
+  renderAskThread();
+  updateAskChrome();
+  await persistAskChat();
 
   try {
     const response = await askMeetings({
-      question,
+      messages: askMessages,
       recordingId: askScopeRecordingId,
     });
     if (gen !== askRequestGen) {
       return;
     }
 
-    meetingAskResult.innerHTML = "";
-    const answer = document.createElement("div");
-    answer.className = "meeting-ask-answer";
-    if (response.insufficientContext) {
-      answer.classList.add("meeting-ask-answer--weak");
-    }
-    answer.textContent = response.answer;
-    meetingAskResult.appendChild(answer);
-    renderAskCitations(response.citations);
-    await persistAskDraft({
-      lastAnswer: response.answer,
-      lastInsufficientContext: response.insufficientContext,
-      lastCitations: response.citations,
-      lastError: undefined,
+    askMessages.push({
+      role: "assistant",
+      content: response.answer,
+      insufficientContext: response.insufficientContext,
+      citations: response.citations,
     });
   } catch (err) {
     if (gen !== askRequestGen) {
       return;
     }
-    meetingAskResult.innerHTML = "";
-    const error = document.createElement("p");
-    error.className = "meeting-ask-error";
     const message = err instanceof Error ? err.message : String(err);
-    error.textContent = message;
-    meetingAskResult.appendChild(error);
-    await persistAskDraft({
-      lastAnswer: undefined,
-      lastCitations: undefined,
-      lastInsufficientContext: undefined,
-      lastError: message,
+    askMessages.push({
+      role: "assistant",
+      content: message,
+      isError: true,
     });
   } finally {
     if (gen === askRequestGen) {
+      askLoading = false;
       meetingAskBtn.disabled = false;
+      renderAskThread();
+      updateAskChrome();
+      await persistAskChat();
+      meetingAsk.focus();
     }
   }
 }

@@ -138,18 +138,52 @@ export type MeetingAskCitation = {
   excerpt: string;
 };
 
+export type MeetingAskRole = "user" | "assistant";
+
+export interface MeetingAskMessage {
+  role: MeetingAskRole;
+  content: string;
+  insufficientContext?: boolean;
+  citations?: MeetingAskCitation[];
+  /** Set when the API call failed for this turn */
+  isError?: boolean;
+}
+
 export interface MeetingAskRequest {
-  question: string;
+  /** Single-turn shorthand — converted to one user message on the server */
+  question?: string;
+  /** Full conversation including the latest user message */
+  messages?: MeetingAskMessage[];
   /** Limit to one meeting; omit to search across all saved meetings. */
   recordingId?: string;
 }
 
 export interface MeetingAskResponse {
-  question: string;
   answer: string;
   insufficientContext: boolean;
   citations: MeetingAskCitation[];
   meetingCount: number;
+}
+
+/** Combine recent user turns for transcript retrieval (follow-ups). */
+export function meetingAskRetrievalQuery(messages: MeetingAskMessage[]): string {
+  const userTexts = messages
+    .filter((m) => m.role === "user")
+    .map((m) => m.content.trim())
+    .filter(Boolean);
+  if (userTexts.length === 0) {
+    return "";
+  }
+  return userTexts.slice(-3).join(" ");
+}
+
+export function formatMeetingAskConversation(messages: MeetingAskMessage[]): string {
+  return messages
+    .map((m) => {
+      const who = m.role === "user" ? "User" : "Assistant";
+      return `${who}: ${m.content.trim()}`;
+    })
+    .join("\n\n");
 }
 
 export const COGNIUM_USER_ID_HEADER = "X-Cognium-User-Id";

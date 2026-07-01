@@ -1,18 +1,19 @@
 import { ai, ax } from "@ax-llm/ax";
-import type { MeetingAskCitation } from "@cognium/meet-shared";
+import type { MeetingAskCitation, MeetingAskMessage } from "@cognium/meet-shared";
+import { formatMeetingAskConversation } from "@cognium/meet-shared";
 
 const meetingAskGen = ax(
-  `question:string, context:string -> answer:string, insufficientContext:boolean`,
+  `conversation:string, context:string -> answer:string, insufficientContext:boolean`,
   {
     description:
-      "Answer the user's question using ONLY the meeting transcripts and notes in context. Be concise and specific. Name which meeting(s) your answer draws from when relevant. If the context does not contain enough information, explain what is missing and set insufficientContext to true.",
+      "Answer the user's latest message in the conversation using ONLY the meeting transcripts and notes in context. Prior turns are for follow-ups (e.g. 'what about pricing?'). Be concise. Name which meeting(s) you draw from when relevant. If context lacks enough information, explain what is missing and set insufficientContext to true.",
   },
 );
 
 export async function answerMeetingQuestion(opts: {
   apiKey: string;
   model: string;
-  question: string;
+  messages: MeetingAskMessage[];
   context: string;
   citations: MeetingAskCitation[];
 }): Promise<{
@@ -34,7 +35,7 @@ export async function answerMeetingQuestion(opts: {
   const result = await meetingAskGen.forward(
     llm,
     {
-      question: opts.question.trim(),
+      conversation: formatMeetingAskConversation(opts.messages),
       context: opts.context,
     },
     { model: opts.model },

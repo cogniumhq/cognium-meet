@@ -16,8 +16,11 @@ import {
 } from "./transcription/process-recording.js";
 import { enqueueMeetingNotes } from "./notes/process-notes.js";
 import { requestLog } from "./middleware/request-log.js";
-import { buildAskContext } from "./ask/build-ask-context.js";
 import { answerMeetingQuestion } from "./ask/answer-meeting-question.js";
+import {
+  buildAskContextForMessages,
+  parseAskMessages,
+} from "./ask/parse-ask-request.js";
 import { parseUserIdHeader } from "./storage/user-id.js";
 import type { UserStoreRegistry } from "./storage/user-store-registry.js";
 
@@ -88,16 +91,16 @@ export function createApp(deps: AppDeps) {
     const store = c.get("store");
     const searchIndex = c.get("searchIndex");
 
-    let body: { question?: string; recordingId?: string };
+    let body: { question?: string; recordingId?: string; messages?: unknown };
     try {
       body = await c.req.json();
     } catch {
       return c.json({ error: "Invalid request body" }, 400);
     }
 
-    const question = body.question?.trim() ?? "";
-    if (!question) {
-      return c.json({ error: "Missing question" }, 400);
+    const messages = parseAskMessages(body);
+    if (!messages) {
+      return c.json({ error: "Missing question or messages" }, 400);
     }
 
     const recordingId =
@@ -118,27 +121,27 @@ export function createApp(deps: AppDeps) {
       }
     }
 
-    const { context, citations, meetingCount } = await buildAskContext({
+    const { context, citations, meetingCount } = await buildAskContextForMessages({
       store,
       searchIndex,
-      question,
+      messages,
       recordingId,
     });
 
     const result = await answerMeetingQuestion({
       apiKey: deps.openaiApiKey,
       model: deps.askModel,
-      question,
+      messages,
       context,
       citations,
     });
 
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
     console.log(
-      `[ask] question=${JSON.stringify(question.slice(0, 80))} meetings=${meetingCount} insufficient=${result.insufficientContext}`,
+      `[ask] turns=${messages.length} question=${JSON.stringify((lastUser?.content ?? "").slice(0, 80))} meetings=${meetingCount} insufficient=${result.insufficientContext}`,
     );
 
     return c.json({
-      question,
       answer: result.answer,
       insufficientContext: result.insufficientContext,
       citations: result.citations,

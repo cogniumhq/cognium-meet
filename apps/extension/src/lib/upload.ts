@@ -180,16 +180,33 @@ export async function fetchTranscript(id: string): Promise<TranscriptResult> {
   return (await response.json()) as TranscriptResult;
 }
 
+function normalizeAskRequest(request: MeetingAskRequest): MeetingAskRequest {
+  if (!request.messages?.length) {
+    return request;
+  }
+
+  const messages = request.messages.map(({ role, content }) => ({ role, content }));
+  const lastUser = [...messages].reverse().find((m) => m.role === "user");
+
+  return {
+    ...request,
+    messages,
+    // Older API builds only read `question`; keep it in sync with the latest user turn.
+    question: request.question?.trim() || lastUser?.content,
+  };
+}
+
 export async function askMeetings(
   request: MeetingAskRequest,
 ): Promise<MeetingAskResponse> {
   const apiUrl = await getApiUrl();
   const headers = await buildApiHeaders({ "Content-Type": "application/json" });
+  const payload = normalizeAskRequest(request);
 
   const response = await fetch(`${apiUrl}/v1/ask`, {
     method: "POST",
     headers,
-    body: JSON.stringify(request),
+    body: JSON.stringify(payload),
   });
   if (!response.ok) {
     const text = await response.text();

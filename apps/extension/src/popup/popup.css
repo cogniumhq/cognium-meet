@@ -223,7 +223,14 @@ button:disabled {
   color: var(--text-dim);
 }
 
-.meeting-ask-clear-scope {
+.meeting-ask-header-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.meeting-ask-clear-scope,
+.meeting-ask-clear-chat {
   font-size: 11px;
   padding: 0 !important;
 }
@@ -250,6 +257,72 @@ button:disabled {
 
 .meeting-ask-btn {
   width: 100%;
+}
+
+.meeting-ask-thread {
+  margin-bottom: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 92%, var(--bg));
+}
+
+.meeting-ask-thread::-webkit-scrollbar {
+  width: 6px;
+}
+
+.meeting-ask-thread::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+.meeting-ask-bubble {
+  max-width: 92%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.meeting-ask-bubble--user {
+  align-self: flex-end;
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+.meeting-ask-bubble--assistant {
+  align-self: flex-start;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.meeting-ask-bubble--weak {
+  color: var(--text-muted);
+}
+
+.meeting-ask-bubble--error {
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+  color: var(--danger);
+}
+
+.meeting-ask-bubble--loading {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.meeting-ask-bubble-text {
+  white-space: pre-wrap;
+}
+
+.meeting-ask-bubble .meeting-ask-sources-title {
+  margin-top: 8px;
 }
 
 .meeting-ask-result {
