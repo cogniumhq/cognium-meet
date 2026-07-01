@@ -75,6 +75,18 @@ export interface FilterEchoOpts {
   meetingTitle?: string;
 }
 
+/** Whisper junk on quiet mic: "10.5.", ".", "..." */
+export function isWhisperJunkText(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return true;
+  }
+  if (/^\d+([.,]\d+)?\.?$/.test(trimmed)) {
+    return true;
+  }
+  return !/[\p{L}\p{N}]/u.test(trimmed);
+}
+
 /** Drop segments that echo prompts or the meeting/tab title. */
 export function filterPromptEchoSegments<T extends { text: string }>(
   segments: T[],
@@ -89,7 +101,7 @@ export function filterPromptEchoSegments<T extends { text: string }>(
 
   return segments.filter((seg) => {
     const text = seg.text.trim();
-    if (!text) {
+    if (!text || isWhisperJunkText(text)) {
       return false;
     }
     const lower = text.toLowerCase();
