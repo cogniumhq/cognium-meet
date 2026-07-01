@@ -7,6 +7,7 @@ import {
 } from "@cognium/meet-shared";
 
 const SETTINGS_KEY = "settings";
+const USER_ID_KEY = "cogniumUserId";
 
 const DEFAULT_SETTINGS: ExtensionSettings = {
   apiUrl: DEFAULT_API_URL,
@@ -23,6 +24,18 @@ export async function getSettings(): Promise<ExtensionSettings> {
 
 export async function saveSettings(settings: ExtensionSettings): Promise<void> {
   await chrome.storage.sync.set({ [SETTINGS_KEY]: settings });
+}
+
+/** Stable per Chrome profile — stored in local (not sync) storage. */
+export async function getOrCreateUserId(): Promise<string> {
+  const result = await chrome.storage.local.get(USER_ID_KEY);
+  const existing = result[USER_ID_KEY];
+  if (typeof existing === "string" && existing.length > 0) {
+    return existing;
+  }
+  const userId = crypto.randomUUID();
+  await chrome.storage.local.set({ [USER_ID_KEY]: userId });
+  return userId;
 }
 
 export interface StoredRecording {

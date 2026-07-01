@@ -50,7 +50,7 @@ Record a browser tab (+ optional mic) → transcribe → download timestamped TX
 | ✅ | **AI meeting notes** | Auto-runs after transcription via `@ax-llm/ax` (`MEETING_NOTES_MODEL`, default `gpt-4o-mini`). Download JSON/MD from popup; `POST /v1/recordings/:id/notes` to regenerate. |
 | ✅ | **Speaker labels** | **Speaker 1 / 2 / …** via diarization on mixed audio (Settings → Diarize). **You / Others** via dual-track Whisper. No Meet display names without caption scrape or known-speaker references. |
 | ✅ | **In-popup transcript viewer** | View completed transcripts inline with search and copy; downloads still available. |
-| ⬜ | **Search across past meetings** | Index transcripts in SQLite or the API. |
+| ✅ | **Ask questions about meetings** | Natural-language Q&A via `POST /v1/ask`; per Chrome profile (`X-Cognium-User-Id`) isolates server storage. |
 
 ## Tier 3 — Smarter capture
 
@@ -83,7 +83,7 @@ flowchart TD
   subgraph sprint2 [Sprint 2 - Value]
     E["Ax meeting summary plus action items ✅"]
     F["In-popup transcript viewer ✅"]
-    G["Search past transcripts ⬜"]
+    G["Ask questions about meetings ✅"]
   end
   subgraph sprint3 [Sprint 3 - Polish]
     H["Known speaker You label ⬜"]
@@ -94,7 +94,7 @@ flowchart TD
 ```
 
 - **Sprint 1** — Core trust work is done; finish mic-in-popup CTA + integration tests.
-- **Sprint 2** — In-popup viewer is shipped; next is search across meetings.
+- **Sprint 2** — Meeting Q&A is shipped; next sprint items are known-speaker **You** label and hosting.
 - **Sprint 3** — Known-speaker **You** label on mixed diarize + production hosting.
 
 ## Quick wins (≈1 day each)
@@ -113,6 +113,4 @@ flowchart TD
 
 ## Recommended starting point
 
-**Search across past meetings** — index `transcript.json` + meeting notes.
-
-For labeling yourself as **You** on mixed audio: **known speaker references** on the diarize API (short mic clip at record start).
+**Known speaker references** on the diarize API (short mic clip at record start) — label yourself as **You** on mixed audio.

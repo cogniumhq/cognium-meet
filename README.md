@@ -112,8 +112,13 @@ remote participants (and a solo test will be mostly silent without mic).
 | `GET` | `/v1/recordings/:id` | Poll status (`processing`, `completed`, `failed`) |
 | `GET` | `/v1/recordings/:id/transcript.txt` | Plain text transcript |
 | `GET` | `/v1/recordings/:id/transcript.json` | JSON with segments |
+| `POST` | `/v1/ask` | Ask a question across saved meetings (`{ question, recordingId? }`) |
 
 Auth: `Authorization: Bearer <API_TOKEN>` when `API_TOKEN` is set.
+
+Each Chrome profile sends a stable `X-Cognium-User-Id` (UUID in extension local storage). The API stores recordings under `storage/users/<userId>/` so profiles do not share transcripts.
+
+If you have old recordings from before per-profile storage, either record again or move files manually into your profile folder (find your UUID in extension DevTools → Application → Local Storage → `cogniumUserId`).
 
 ## Output format
 

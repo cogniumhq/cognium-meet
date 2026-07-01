@@ -131,6 +131,36 @@ export function audioCaptureModeLabel(mode: AudioCaptureMode): string {
   }
 }
 
+export type MeetingAskCitation = {
+  recordingId: string;
+  meetingTitle?: string;
+  startedAt: string;
+  excerpt: string;
+};
+
+export interface MeetingAskRequest {
+  question: string;
+  /** Limit to one meeting; omit to search across all saved meetings. */
+  recordingId?: string;
+}
+
+export interface MeetingAskResponse {
+  question: string;
+  answer: string;
+  insufficientContext: boolean;
+  citations: MeetingAskCitation[];
+  meetingCount: number;
+}
+
+export const COGNIUM_USER_ID_HEADER = "X-Cognium-User-Id";
+
+/** UUID v4 assigned per Chrome profile (chrome.storage.local). */
+export function isValidCogniumUserId(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value.trim(),
+  );
+}
+
 export interface ExtensionSettings {
   apiUrl: string;
   apiToken: string;

@@ -50,6 +50,30 @@
             <h2>Recent transcripts</h2>
             <button id="settings-open-btn" type="button" class="text-link settings-btn">Settings</button>
           </div>
+          <div class="meeting-ask-wrap">
+            <div class="meeting-ask-header">
+              <label for="meeting-ask" id="meeting-ask-label" class="meeting-ask-label">
+                Ask about your meetings
+              </label>
+              <button
+                id="meeting-ask-clear-scope"
+                type="button"
+                class="text-link meeting-ask-clear-scope hidden"
+              >
+                All meetings
+              </button>
+            </div>
+            <textarea
+              id="meeting-ask"
+              rows="2"
+              placeholder="e.g. What did we decide about pricing?"
+              autocomplete="off"
+            ></textarea>
+            <button id="meeting-ask-btn" type="button" class="secondary meeting-ask-btn">
+              Ask
+            </button>
+          </div>
+          <div id="meeting-ask-result" class="meeting-ask-result hidden"></div>
           <ul id="history-list" class="history-scroll"></ul>
         </section>
       </div>

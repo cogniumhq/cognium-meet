@@ -1,4 +1,4 @@
-import type { RecordingMeta, TranscriptResult, TranscriptSegment, TranscriptionProgress } from "@cognium/meet-shared";
+import type { MeetingAskCitation, RecordingMeta, TranscriptResult, TranscriptSegment, TranscriptionProgress } from "@cognium/meet-shared";
 import {
   formatTimestamp,
   isTranscriptionProgressActive,
@@ -8,6 +8,7 @@ import {
   transcriptionProgressPercent,
 } from "@cognium/meet-shared";
 import {
+  askMeetings,
   deleteServerRecording,
   downloadMeetingNotes,
   downloadTranscript,
@@ -34,6 +35,13 @@ const statusText = document.getElementById("status-text") as HTMLParagraphElemen
 const recordingIndicator = document.getElementById("recording-indicator") as HTMLDivElement;
 const timerEl = document.getElementById("timer") as HTMLSpanElement;
 const historyList = document.getElementById("history-list") as HTMLUListElement;
+const meetingAsk = document.getElementById("meeting-ask") as HTMLTextAreaElement;
+const meetingAskLabel = document.getElementById("meeting-ask-label") as HTMLLabelElement;
+const meetingAskBtn = document.getElementById("meeting-ask-btn") as HTMLButtonElement;
+const meetingAskClearScope = document.getElementById(
+  "meeting-ask-clear-scope",
+) as HTMLButtonElement;
+const meetingAskResult = document.getElementById("meeting-ask-result") as HTMLDivElement;
 const mainView = document.getElementById("main-view") as HTMLDivElement;
 const transcriptView = document.getElementById("transcript-view") as HTMLDivElement;
 const settingsView = document.getElementById("settings-view") as HTMLDivElement;
@@ -60,6 +68,8 @@ let watchingTranscriptionId: string | undefined;
 let displayedPercentFloor = 0;
 let historyRenderGen = 0;
 let currentTranscript: TranscriptResult | undefined;
+let askScopeRecordingId: string | undefined;
+let askRequestGen = 0;
 
 void init();
 
@@ -86,6 +96,14 @@ async function init(): Promise<void> {
     }
   });
   transcriptCopyBtn.addEventListener("click", () => void copyTranscript());
+  meetingAskBtn.addEventListener("click", () => void runMeetingAsk());
+  meetingAskClearScope.addEventListener("click", () => setAskScope());
+  meetingAsk.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      void runMeetingAsk();
+    }
+  });
   await initSettingsForm(document.getElementById("settings-root")!);
 
   startBtn.addEventListener("click", () => void startRecording());
@@ -329,6 +347,113 @@ function showMainView(): void {
   currentTranscript = undefined;
 }
 
+function setAskScope(item?: StoredRecording): void {
+  askScopeRecordingId = item?.id;
+  if (item) {
+    meetingAskLabel.textContent = `Ask about: ${item.meetingTitle ?? "Recording"}`;
+    meetingAskClearScope.classList.remove("hidden");
+    meetingAsk.focus();
+  } else {
+    meetingAskLabel.textContent = "Ask about your meetings";
+    meetingAskClearScope.classList.add("hidden");
+  }
+}
+
+function clearAskResult(): void {
+  meetingAskResult.innerHTML = "";
+  meetingAskResult.classList.add("hidden");
+}
+
+function citationToRecording(citation: MeetingAskCitation): StoredRecording {
+  return {
+    id: citation.recordingId,
+    meetingTitle: citation.meetingTitle,
+    startedAt: citation.startedAt,
+    status: "completed",
+    createdAt: citation.startedAt,
+  };
+}
+
+function renderAskCitations(citations: MeetingAskCitation[]): void {
+  if (citations.length === 0) {
+    return;
+  }
+
+  const heading = document.createElement("p");
+  heading.className = "meeting-ask-sources-title";
+  heading.textContent =
+    citations.length === 1 ? "Source meeting" : `Source meetings (${citations.length})`;
+  meetingAskResult.appendChild(heading);
+
+  const list = document.createElement("ul");
+  list.className = "meeting-ask-sources";
+
+  for (const citation of citations) {
+    const li = document.createElement("li");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "meeting-ask-source-btn";
+    btn.textContent = citation.meetingTitle ?? "Recording";
+    btn.title = citation.excerpt;
+    btn.addEventListener("click", () => {
+      void openTranscriptViewer(citationToRecording(citation));
+    });
+    li.appendChild(btn);
+    list.appendChild(li);
+  }
+
+  meetingAskResult.appendChild(list);
+}
+
+async function runMeetingAsk(): Promise<void> {
+  const question = meetingAsk.value.trim();
+  if (!question) {
+    return;
+  }
+
+  const gen = ++askRequestGen;
+  meetingAskBtn.disabled = true;
+  meetingAskResult.classList.remove("hidden");
+  meetingAskResult.innerHTML = "";
+  const loading = document.createElement("p");
+  loading.className = "meeting-ask-loading";
+  loading.textContent = "Thinking…";
+  meetingAskResult.appendChild(loading);
+
+  try {
+    const response = await askMeetings({
+      question,
+      recordingId: askScopeRecordingId,
+    });
+    if (gen !== askRequestGen) {
+      return;
+    }
+
+    meetingAskResult.innerHTML = "";
+    const answer = document.createElement("div");
+    answer.className = "meeting-ask-answer";
+    if (response.insufficientContext) {
+      answer.classList.add("meeting-ask-answer--weak");
+    }
+    answer.textContent = response.answer;
+    meetingAskResult.appendChild(answer);
+    renderAskCitations(response.citations);
+  } catch (err) {
+    if (gen !== askRequestGen) {
+      return;
+    }
+    meetingAskResult.innerHTML = "";
+    const error = document.createElement("p");
+    error.className = "meeting-ask-error";
+    error.textContent = err instanceof Error ? err.message : String(err);
+    meetingAskResult.appendChild(error);
+  } finally {
+    if (gen === askRequestGen) {
+      meetingAskBtn.disabled = false;
+    }
+  }
+}
+
 function showSettings(open: boolean): void {
   if (open) {
     mainView.classList.add("hidden");
@@ -396,12 +521,15 @@ function renderTranscriptSegments(segments: TranscriptSegment[], query: string):
   }
 }
 
-async function openTranscriptViewer(item: StoredRecording): Promise<void> {
+async function openTranscriptViewer(
+  item: StoredRecording,
+  initialQuery = "",
+): Promise<void> {
   mainView.classList.add("hidden");
   settingsView.classList.add("hidden");
   transcriptView.classList.remove("hidden");
   transcriptTitle.textContent = item.meetingTitle ?? "Recording";
-  transcriptSearch.value = "";
+  transcriptSearch.value = initialQuery;
   currentTranscript = undefined;
   transcriptBody.innerHTML = "";
   const loading = document.createElement("p");
@@ -413,7 +541,7 @@ async function openTranscriptViewer(item: StoredRecording): Promise<void> {
   try {
     const transcript = await fetchTranscript(item.id);
     currentTranscript = transcript;
-    renderTranscriptSegments(transcript.segments, "");
+    renderTranscriptSegments(transcript.segments, initialQuery);
     transcriptCopyBtn.disabled = false;
   } catch (err) {
     transcriptBody.innerHTML = "";
@@ -929,6 +1057,15 @@ async function renderHistory(): Promise<void> {
         void openTranscriptViewer(item);
       });
       links.appendChild(view);
+
+      const ask = document.createElement("button");
+      ask.type = "button";
+      ask.className = "link-btn";
+      ask.textContent = "Ask";
+      ask.addEventListener("click", () => {
+        setAskScope(item);
+      });
+      links.appendChild(ask);
 
       const txt = document.createElement("button");
       txt.type = "button";

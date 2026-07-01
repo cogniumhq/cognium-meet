@@ -1,8 +1,9 @@
-import type { AudioCaptureMode, RecordingMeta, TranscriptResult } from "@cognium/meet-shared";
+import type { AudioCaptureMode, MeetingAskRequest, MeetingAskResponse, RecordingMeta, TranscriptResult } from "@cognium/meet-shared";
 import {
   DEFAULT_AUDIO_CAPTURE_MODE,
   DEFAULT_TRANSCRIPTION_MODEL,
 } from "@cognium/meet-shared";
+import { buildApiHeaders, getApiUrl } from "./api-headers.js";
 import { isLikelyAudio } from "./audio-bytes.js";
 import { getSettings } from "./storage.js";
 
@@ -27,10 +28,7 @@ export async function uploadRecording(params: {
   }
 
   const settings = await getSettings();
-  const headers: Record<string, string> = {};
-  if (settings.apiToken) {
-    headers.Authorization = `Bearer ${settings.apiToken}`;
-  }
+  const headers = await buildApiHeaders();
 
   const form = new FormData();
   form.append(
@@ -74,15 +72,10 @@ export async function uploadRecording(params: {
 }
 
 export async function fetchRecordingStatus(id: string): Promise<RecordingMeta> {
-  const settings = await getSettings();
-  const headers: Record<string, string> = {};
-  if (settings.apiToken) {
-    headers.Authorization = `Bearer ${settings.apiToken}`;
-  }
+  const apiUrl = await getApiUrl();
+  const headers = await buildApiHeaders();
 
-  const response = await fetch(`${settings.apiUrl}/v1/recordings/${id}`, {
-    headers,
-  });
+  const response = await fetch(`${apiUrl}/v1/recordings/${id}`, { headers });
   if (!response.ok) {
     throw new Error(`Status check failed (${response.status})`);
   }
@@ -91,14 +84,10 @@ export async function fetchRecordingStatus(id: string): Promise<RecordingMeta> {
 
 export async function retryRecording(id: string): Promise<RecordingMeta> {
   const settings = await getSettings();
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (settings.apiToken) {
-    headers.Authorization = `Bearer ${settings.apiToken}`;
-  }
+  const apiUrl = await getApiUrl();
+  const headers = await buildApiHeaders({ "Content-Type": "application/json" });
 
-  const response = await fetch(`${settings.apiUrl}/v1/recordings/${id}/retry`, {
+  const response = await fetch(`${apiUrl}/v1/recordings/${id}/retry`, {
     method: "POST",
     headers,
     body: JSON.stringify({
@@ -114,13 +103,10 @@ export async function retryRecording(id: string): Promise<RecordingMeta> {
 }
 
 export async function deleteServerRecording(id: string): Promise<void> {
-  const settings = await getSettings();
-  const headers: Record<string, string> = {};
-  if (settings.apiToken) {
-    headers.Authorization = `Bearer ${settings.apiToken}`;
-  }
+  const apiUrl = await getApiUrl();
+  const headers = await buildApiHeaders();
 
-  const response = await fetch(`${settings.apiUrl}/v1/recordings/${id}`, {
+  const response = await fetch(`${apiUrl}/v1/recordings/${id}`, {
     method: "DELETE",
     headers,
   });
@@ -141,15 +127,10 @@ export async function pollRecording(
     onUpdate?: (meta: RecordingMeta) => void;
   },
 ): Promise<RecordingMeta> {
-  const settings = await getSettings();
+  const apiUrl = await getApiUrl();
   const intervalMs = opts?.intervalMs ?? 2000;
   const timeoutMs = opts?.timeoutMs ?? 10 * 60 * 1000;
   const started = Date.now();
-
-  const headers: Record<string, string> = {};
-  if (settings.apiToken) {
-    headers.Authorization = `Bearer ${settings.apiToken}`;
-  }
 
   while (Date.now() - started < timeoutMs) {
     let meta: RecordingMeta | undefined;
@@ -157,9 +138,8 @@ export async function pollRecording(
 
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        const response = await fetch(`${settings.apiUrl}/v1/recordings/${id}`, {
-          headers,
-        });
+        const headers = await buildApiHeaders();
+        const response = await fetch(`${apiUrl}/v1/recordings/${id}`, { headers });
         if (!response.ok) {
           throw new Error(`Status check failed (${response.status})`);
         }
@@ -188,37 +168,45 @@ export async function pollRecording(
 }
 
 export async function fetchTranscript(id: string): Promise<TranscriptResult> {
-  const settings = await getSettings();
-  const headers: Record<string, string> = {};
-  if (settings.apiToken) {
-    headers.Authorization = `Bearer ${settings.apiToken}`;
-  }
+  const apiUrl = await getApiUrl();
+  const headers = await buildApiHeaders();
 
-  const response = await fetch(
-    `${settings.apiUrl}/v1/recordings/${id}/transcript.json`,
-    { headers },
-  );
+  const response = await fetch(`${apiUrl}/v1/recordings/${id}/transcript.json`, {
+    headers,
+  });
   if (!response.ok) {
     throw new Error(`Transcript fetch failed (${response.status})`);
   }
   return (await response.json()) as TranscriptResult;
 }
 
+export async function askMeetings(
+  request: MeetingAskRequest,
+): Promise<MeetingAskResponse> {
+  const apiUrl = await getApiUrl();
+  const headers = await buildApiHeaders({ "Content-Type": "application/json" });
+
+  const response = await fetch(`${apiUrl}/v1/ask`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Ask failed (${response.status})${text ? `: ${text}` : ""}`);
+  }
+  return (await response.json()) as MeetingAskResponse;
+}
+
 export async function downloadTranscript(
   id: string,
   format: "txt" | "json",
 ): Promise<void> {
-  const settings = await getSettings();
-  const headers: Record<string, string> = {};
-  if (settings.apiToken) {
-    headers.Authorization = `Bearer ${settings.apiToken}`;
-  }
+  const apiUrl = await getApiUrl();
+  const headers = await buildApiHeaders();
 
   const suffix = format === "txt" ? "transcript.txt" : "transcript.json";
-  const response = await fetch(
-    `${settings.apiUrl}/v1/recordings/${id}/${suffix}`,
-    { headers },
-  );
+  const response = await fetch(`${apiUrl}/v1/recordings/${id}/${suffix}`, { headers });
   if (!response.ok) {
     throw new Error(`Download failed (${response.status})`);
   }
@@ -236,16 +224,11 @@ export async function downloadMeetingNotes(
   id: string,
   format: "json" | "md",
 ): Promise<void> {
-  const settings = await getSettings();
-  const headers: Record<string, string> = {};
-  if (settings.apiToken) {
-    headers.Authorization = `Bearer ${settings.apiToken}`;
-  }
+  const apiUrl = await getApiUrl();
+  const headers = await buildApiHeaders();
 
   const suffix = format === "md" ? "notes.md" : "notes.json";
-  const response = await fetch(`${settings.apiUrl}/v1/recordings/${id}/${suffix}`, {
-    headers,
-  });
+  const response = await fetch(`${apiUrl}/v1/recordings/${id}/${suffix}`, { headers });
   if (!response.ok) {
     throw new Error(`Notes download failed (${response.status})`);
   }

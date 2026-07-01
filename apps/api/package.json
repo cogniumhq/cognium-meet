@@ -14,12 +14,14 @@
     "@ax-llm/ax": "^20.0.0",
     "@cognium/meet-shared": "workspace:*",
     "@hono/node-server": "^1.14.1",
+    "better-sqlite3": "^11.9.1",
     "hono": "^4.7.10",
     "dotenv": "^16.5.0",
     "openai": "^4.104.0",
     "uuid": "^11.1.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.15.21",
     "@types/uuid": "^10.0.0",
     "tsup": "^8.3.5",

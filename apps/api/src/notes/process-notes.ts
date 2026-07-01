@@ -1,9 +1,10 @@
 import type { RecordingMeta } from "@cognium/meet-shared";
-import { RecordingStore } from "../storage/recording-store.js";
+import type { RecordingStore } from "../storage/recording-store.js";
+import type { UserStoreRegistry } from "../storage/user-store-registry.js";
 import { generateMeetingNotes } from "./generate-meeting-notes.js";
 
 export interface NotesProcessingDeps {
-  store: RecordingStore;
+  userRegistry: UserStoreRegistry;
   openaiApiKey: string;
   notesModel: string;
   notesEnabled: boolean;
@@ -11,40 +12,54 @@ export interface NotesProcessingDeps {
 
 const activeNotesJobs = new Set<string>();
 
-export function enqueueMeetingNotes(deps: NotesProcessingDeps, id: string): void {
+function notesJobKey(userId: string, id: string): string {
+  return `${userId}:${id}`;
+}
+
+export function enqueueMeetingNotes(
+  deps: NotesProcessingDeps,
+  userId: string,
+  id: string,
+): void {
   if (!deps.notesEnabled) {
     return;
   }
-  if (activeNotesJobs.has(id)) {
+  const key = notesJobKey(userId, id);
+  if (activeNotesJobs.has(key)) {
     return;
   }
-  activeNotesJobs.add(id);
-  void processMeetingNotes(deps, id).finally(() => {
-    activeNotesJobs.delete(id);
+  activeNotesJobs.add(key);
+  void processMeetingNotes(deps, userId, id).finally(() => {
+    activeNotesJobs.delete(key);
   });
 }
 
-async function processMeetingNotes(deps: NotesProcessingDeps, id: string): Promise<void> {
-  const meta = await deps.store.getMeta(id);
+async function processMeetingNotes(
+  deps: NotesProcessingDeps,
+  userId: string,
+  id: string,
+): Promise<void> {
+  const { store, searchIndex } = await deps.userRegistry.forUser(userId);
+  const meta = await store.getMeta(id);
   if (!meta || meta.status !== "completed") {
     return;
   }
 
-  const transcript = await deps.store.readTranscriptJson(id);
+  const transcript = await store.readTranscriptJson(id);
   if (!transcript || transcript.segments.length === 0) {
-    await saveNotesMeta(deps.store, meta, {
+    await saveNotesMeta(store, meta, {
       notesStatus: "failed",
       notesError: "Transcript is empty — cannot generate notes",
     });
     return;
   }
 
-  await saveNotesMeta(deps.store, meta, {
+  await saveNotesMeta(store, meta, {
     notesStatus: "processing",
     notesError: undefined,
   });
 
-  console.log(`[notes] started id=${id} model=${deps.notesModel}`);
+  console.log(`[notes] started user=${userId} id=${id} model=${deps.notesModel}`);
 
   try {
     const notes = await generateMeetingNotes({
@@ -55,31 +70,33 @@ async function processMeetingNotes(deps: NotesProcessingDeps, id: string): Promi
       transcript,
     });
 
-    await deps.store.saveMeetingNotes(id, notes);
+    await store.saveMeetingNotes(id, notes);
 
-    const latest = await deps.store.getMeta(id);
+    const latest = await store.getMeta(id);
     if (!latest) {
       return;
     }
 
-    await saveNotesMeta(deps.store, latest, {
+    searchIndex.indexNotes(id, latest.meetingTitle, latest.startedAt, notes);
+
+    await saveNotesMeta(store, latest, {
       notesStatus: "completed",
       notesError: undefined,
     });
 
     console.log(
-      `[notes] completed id=${id} actions=${notes.actionItems.length} decisions=${notes.decisions.length}`,
+      `[notes] completed user=${userId} id=${id} actions=${notes.actionItems.length} decisions=${notes.decisions.length}`,
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const latest = await deps.store.getMeta(id);
+    const latest = await store.getMeta(id);
     if (latest) {
-      await saveNotesMeta(deps.store, latest, {
+      await saveNotesMeta(store, latest, {
         notesStatus: "failed",
         notesError: message,
       });
     }
-    console.error(`[notes] failed id=${id} error=${message}`);
+    console.error(`[notes] failed user=${userId} id=${id} error=${message}`);
   }
 }
 

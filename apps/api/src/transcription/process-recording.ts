@@ -1,12 +1,14 @@
 import {
   mergeTranscriptionProgress,
+  segmentsToPlainText,
   type RecordingMeta,
   type TranscriptResult,
   type TranscriptionModel,
   type TranscriptionProgress,
 } from "@cognium/meet-shared";
 import type { TranscriptionProvider } from "./provider.js";
-import { RecordingStore } from "../storage/recording-store.js";
+import type { RecordingStore } from "../storage/recording-store.js";
+import type { SearchIndex } from "../storage/search-index.js";
 import { getAudioDurationSeconds } from "./prepare-audio.js";
 import {
   mergeSpeakerSegments,
@@ -34,7 +36,6 @@ async function saveProgress(
 }
 
 export interface ProcessingDeps extends NotesProcessingDeps {
-  store: RecordingStore;
   getTranscriptionProvider: (model: TranscriptionModel) => TranscriptionProvider;
   defaultTranscriptionModel: TranscriptionModel;
   deleteAudioAfterTranscription: boolean;
@@ -43,22 +44,26 @@ export interface ProcessingDeps extends NotesProcessingDeps {
 const PROCESSING_STALE_MS = 90 * 60 * 1000;
 const activeJobs = new Set<string>();
 
-export function cancelTranscription(id: string): void {
-  activeJobs.delete(id);
+function transcriptionJobKey(userId: string, id: string): string {
+  return `${userId}:${id}`;
 }
 
-export function isTranscriptionActive(id: string): boolean {
-  return activeJobs.has(id);
+export function cancelTranscription(userId: string, id: string): void {
+  activeJobs.delete(transcriptionJobKey(userId, id));
+}
+
+export function isTranscriptionActive(userId: string, id: string): boolean {
+  return activeJobs.has(transcriptionJobKey(userId, id));
 }
 
 async function transcribeDualTrack(
-  deps: ProcessingDeps,
+  store: RecordingStore,
+  whisper: TranscriptionProvider,
   id: string,
   meta: RecordingMeta,
 ): Promise<TranscriptResult> {
-  const whisper = deps.getTranscriptionProvider("whisper-1");
-  const tabPath = deps.store.audioPath(id);
-  const micPath = deps.store.micAudioPath(id);
+  const tabPath = store.audioPath(id);
+  const micPath = store.micAudioPath(id);
   const tabSeconds = (await getAudioDurationSeconds(tabPath)) ?? 0;
   const micSeconds = (await getAudioDurationSeconds(micPath)) ?? 0;
   const totalAudioSeconds = tabSeconds + micSeconds || undefined;
@@ -66,11 +71,11 @@ async function transcribeDualTrack(
   const transcribeOpts = {
     meetingTitle: meta.meetingTitle,
     onProgress: (progress: TranscriptionProgress) =>
-      saveProgress(deps.store, id, progress),
+      saveProgress(store, id, progress),
   };
 
   const partStartedAt1 = new Date().toISOString();
-  await saveProgress(deps.store, id, {
+  await saveProgress(store, id, {
     phase: "transcribing",
     profile: "whisper",
     step: 1,
@@ -86,7 +91,7 @@ async function transcribeDualTrack(
   const tabResult = await whisper.transcribe(tabPath, transcribeOpts);
 
   const partStartedAt2 = new Date().toISOString();
-  await saveProgress(deps.store, id, {
+  await saveProgress(store, id, {
     phase: "transcribing",
     profile: "whisper",
     step: 2,
@@ -119,25 +124,27 @@ async function transcribeDualTrack(
 
 export async function processRecording(
   deps: ProcessingDeps,
+  userId: string,
   id: string,
 ): Promise<void> {
-  const meta = await deps.store.getMeta(id);
+  const { store, searchIndex } = await deps.userRegistry.forUser(userId);
+  const meta = await store.getMeta(id);
   if (!meta) {
     throw new Error(`Recording ${id} not found`);
   }
 
-  if (!(await deps.store.audioExists(id))) {
+  if (!(await store.audioExists(id))) {
     throw new Error("Audio file missing — cannot transcribe");
   }
 
   const dualTrack =
-    meta.captureMode === "dual-track" && (await deps.store.micAudioExists(id));
+    meta.captureMode === "dual-track" && (await store.micAudioExists(id));
   const model = dualTrack
     ? "whisper-1"
     : (meta.transcriptionModel ?? deps.defaultTranscriptionModel);
   const transcription = deps.getTranscriptionProvider(model);
 
-  await deps.store.saveMeta({
+  await store.saveMeta({
     ...meta,
     status: "processing",
     error: undefined,
@@ -148,27 +155,39 @@ export async function processRecording(
   });
 
   console.log(
-    `[transcription] started id=${id} model=${model} capture=${meta.captureMode ?? "mixed"} dual=${dualTrack} title=${meta.meetingTitle ?? "(none)"}`,
+    `[transcription] started user=${userId} id=${id} model=${model} capture=${meta.captureMode ?? "mixed"} dual=${dualTrack} title=${meta.meetingTitle ?? "(none)"}`,
   );
 
   const result = dualTrack
-    ? await transcribeDualTrack(deps, id, meta)
-    : await transcription.transcribe(deps.store.audioPath(id), {
+    ? await transcribeDualTrack(
+        store,
+        deps.getTranscriptionProvider("whisper-1"),
+        id,
+        meta,
+      )
+    : await transcription.transcribe(store.audioPath(id), {
         meetingTitle: meta.meetingTitle,
-        onProgress: (progress) => saveProgress(deps.store, id, progress),
+        onProgress: (progress) => saveProgress(store, id, progress),
       });
 
-  const stillExists = await deps.store.getMeta(id);
+  const stillExists = await store.getMeta(id);
   if (!stillExists) {
     return;
   }
 
-  await saveProgress(deps.store, id, {
+  await saveProgress(store, id, {
     phase: "saving",
     label: "Saving transcript…",
   });
 
-  await deps.store.saveTranscript(id, result);
+  await store.saveTranscript(id, result);
+
+  searchIndex.indexTranscript(
+    id,
+    stillExists.meetingTitle,
+    stillExists.startedAt,
+    segmentsToPlainText(result.segments),
+  );
 
   const completed: RecordingMeta = {
     ...stillExists,
@@ -181,71 +200,83 @@ export async function processRecording(
     notesStatus: deps.notesEnabled ? "pending" : "skipped",
     notesError: undefined,
   };
-  await deps.store.saveMeta(completed);
+  await store.saveMeta(completed);
 
   console.log(
-    `[transcription] completed id=${id} segments=${result.segments.length} language=${result.language ?? "?"}`,
+    `[transcription] completed user=${userId} id=${id} segments=${result.segments.length} language=${result.language ?? "?"}`,
   );
 
-  enqueueMeetingNotes(deps, id);
+  enqueueMeetingNotes(deps, userId, id);
 
   if (deps.deleteAudioAfterTranscription) {
-    await deps.store.deleteAudio(id);
+    await store.deleteAudio(id);
   }
 }
 
 export async function markRecordingFailed(
   deps: ProcessingDeps,
+  userId: string,
   id: string,
   error: string,
 ): Promise<void> {
-  const meta = await deps.store.getMeta(id);
+  const { store } = await deps.userRegistry.forUser(userId);
+  const meta = await store.getMeta(id);
   if (!meta) {
     return;
   }
-  await deps.store.saveMeta({
+  await store.saveMeta({
     ...meta,
     status: "failed",
     error,
     processingStartedAt: undefined,
     progress: undefined,
   });
-  console.log(`[transcription] failed id=${id} error=${error}`);
+  console.log(`[transcription] failed user=${userId} id=${id} error=${error}`);
 }
 
-export function enqueueTranscription(deps: ProcessingDeps, id: string): void {
-  if (activeJobs.has(id)) {
+export function enqueueTranscription(
+  deps: ProcessingDeps,
+  userId: string,
+  id: string,
+): void {
+  const key = transcriptionJobKey(userId, id);
+  if (activeJobs.has(key)) {
     return;
   }
-  activeJobs.add(id);
-  void processRecording(deps, id)
+  activeJobs.add(key);
+  void processRecording(deps, userId, id)
     .catch(async (err) => {
       const message = err instanceof Error ? err.message : String(err);
-      await markRecordingFailed(deps, id, message);
+      await markRecordingFailed(deps, userId, id, message);
     })
     .finally(() => {
-      activeJobs.delete(id);
+      activeJobs.delete(key);
     });
 }
 
 export async function resumePendingRecordings(deps: ProcessingDeps): Promise<void> {
-  const pending = await deps.store.listMetasByStatus("processing");
-  for (const meta of pending) {
-    const started = new Date(meta.processingStartedAt ?? meta.startedAt).getTime();
-    const ageMs = Date.now() - started;
+  const userIds = await deps.userRegistry.listUserIds();
+  for (const userId of userIds) {
+    const { store } = await deps.userRegistry.forUser(userId);
+    const pending = await store.listMetasByStatus("processing");
+    for (const meta of pending) {
+      const started = new Date(meta.processingStartedAt ?? meta.startedAt).getTime();
+      const ageMs = Date.now() - started;
 
-    if (await deps.store.audioExists(meta.id)) {
-      console.log(`Resuming transcription for ${meta.id}`);
-      enqueueTranscription(deps, meta.id);
-      continue;
-    }
+      if (await store.audioExists(meta.id)) {
+        console.log(`Resuming transcription for user=${userId} id=${meta.id}`);
+        enqueueTranscription(deps, userId, meta.id);
+        continue;
+      }
 
-    if (ageMs > PROCESSING_STALE_MS) {
-      await markRecordingFailed(
-        deps,
-        meta.id,
-        "Transcription interrupted — audio file is no longer available",
-      );
+      if (ageMs > PROCESSING_STALE_MS) {
+        await markRecordingFailed(
+          deps,
+          userId,
+          meta.id,
+          "Transcription interrupted — audio file is no longer available",
+        );
+      }
     }
   }
 }
