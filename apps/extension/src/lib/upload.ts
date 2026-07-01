@@ -1,4 +1,4 @@
-import type { AudioCaptureMode, RecordingMeta } from "@cognium/meet-shared";
+import type { AudioCaptureMode, RecordingMeta, TranscriptResult } from "@cognium/meet-shared";
 import {
   DEFAULT_AUDIO_CAPTURE_MODE,
   DEFAULT_TRANSCRIPTION_MODEL,
@@ -185,6 +185,23 @@ export async function pollRecording(
   }
 
   throw new Error("Transcription timed out");
+}
+
+export async function fetchTranscript(id: string): Promise<TranscriptResult> {
+  const settings = await getSettings();
+  const headers: Record<string, string> = {};
+  if (settings.apiToken) {
+    headers.Authorization = `Bearer ${settings.apiToken}`;
+  }
+
+  const response = await fetch(
+    `${settings.apiUrl}/v1/recordings/${id}/transcript.json`,
+    { headers },
+  );
+  if (!response.ok) {
+    throw new Error(`Transcript fetch failed (${response.status})`);
+  }
+  return (await response.json()) as TranscriptResult;
 }
 
 export async function downloadTranscript(

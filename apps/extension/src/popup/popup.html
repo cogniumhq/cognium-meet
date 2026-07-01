@@ -54,6 +54,25 @@
         </section>
       </div>
 
+      <div id="transcript-view" class="hidden">
+        <div class="transcript-header">
+          <button id="transcript-back-btn" type="button" class="back-link">← Back</button>
+          <h2 id="transcript-title">Transcript</h2>
+        </div>
+        <div class="transcript-toolbar">
+          <input
+            id="transcript-search"
+            type="search"
+            placeholder="Search transcript…"
+            autocomplete="off"
+          />
+          <button id="transcript-copy-btn" type="button" class="secondary transcript-copy-btn">
+            Copy
+          </button>
+        </div>
+        <div id="transcript-body" class="transcript-scroll"></div>
+      </div>
+
       <div id="settings-view" class="hidden">
         <div class="settings-panel" id="settings-root">
           <div class="settings-header">

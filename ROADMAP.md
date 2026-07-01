@@ -49,7 +49,7 @@ Record a browser tab (+ optional mic) → transcribe → download timestamped TX
 |--------|------|-----|
 | ✅ | **AI meeting notes** | Auto-runs after transcription via `@ax-llm/ax` (`MEETING_NOTES_MODEL`, default `gpt-4o-mini`). Download JSON/MD from popup; `POST /v1/recordings/:id/notes` to regenerate. |
 | ✅ | **Speaker labels** | **Speaker 1 / 2 / …** via diarization on mixed audio (Settings → Diarize). **You / Others** via dual-track Whisper. No Meet display names without caption scrape or known-speaker references. |
-| ⬜ | **In-popup transcript viewer** | Today you download TXT/JSON/notes. Show transcript inline with search and copy. |
+| ✅ | **In-popup transcript viewer** | View completed transcripts inline with search and copy; downloads still available. |
 | ⬜ | **Search across past meetings** | Index transcripts in SQLite or the API. |
 
 ## Tier 3 — Smarter capture
@@ -82,7 +82,7 @@ flowchart TD
   end
   subgraph sprint2 [Sprint 2 - Value]
     E["Ax meeting summary plus action items ✅"]
-    F["In-popup transcript viewer ⬜"]
+    F["In-popup transcript viewer ✅"]
     G["Search past transcripts ⬜"]
   end
   subgraph sprint3 [Sprint 3 - Polish]
@@ -94,7 +94,7 @@ flowchart TD
 ```
 
 - **Sprint 1** — Core trust work is done; finish mic-in-popup CTA + integration tests.
-- **Sprint 2** — Notes are shipped; next is in-popup transcript viewer + search.
+- **Sprint 2** — In-popup viewer is shipped; next is search across meetings.
 - **Sprint 3** — Known-speaker **You** label on mixed diarize + production hosting.
 
 ## Quick wins (≈1 day each)
@@ -103,7 +103,7 @@ flowchart TD
 |--------|------|
 | ✅ | Show full error text in history for failed / upload_failed recordings |
 | ✅ | **Speaker 1 / 2 / …** in TXT and JSON exports |
-| ✅ | **AI meeting notes** download in popup (Markdown) |
+| ✅ | **In-popup transcript viewer** with search and copy |
 | ✅ | **Transcription model toggle** in extension Settings |
 | ✅ | **Dual-track You / Others** labels |
 | ⬜ | **Open transcript folder** link in popup (path to `storage/transcripts/`) |
@@ -113,8 +113,6 @@ flowchart TD
 
 ## Recommended starting point
 
-**In-popup transcript viewer** — read completed transcripts without downloading files.
-
-Then **search across past meetings** — index `transcript.json` + meeting notes.
+**Search across past meetings** — index `transcript.json` + meeting notes.
 
 For labeling yourself as **You** on mixed audio: **known speaker references** on the diarize API (short mic clip at record start).
