@@ -8,7 +8,6 @@ import {
   transcriptionProgressPercent,
 } from "@cognium/meet-shared";
 import {
-  askMeetings,
   deleteServerRecording,
   downloadMeetingNotes,
   downloadTranscript,
@@ -80,7 +79,6 @@ let currentTranscript: TranscriptResult | undefined;
 let askScopeRecordingId: string | undefined;
 let askScopeMeetingTitle: string | undefined;
 let askMessages: MeetingAskMessage[] = [];
-let askRequestGen = 0;
 let askChatSaveTimer: number | undefined;
 let askLoading = false;
 
@@ -122,6 +120,11 @@ async function init(): Promise<void> {
   window.addEventListener("pagehide", () => {
     window.clearTimeout(askChatSaveTimer);
     void persistAskChat();
+  });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && changes.meetingAskChat) {
+      void refreshAskFromStorage();
+    }
   });
   await initSettingsForm(document.getElementById("settings-root")!);
   await applyMeetingAskVisibility();
@@ -409,13 +412,39 @@ function scheduleSaveAskChat(): void {
   }, 250);
 }
 
-async function persistAskChat(): Promise<void> {
+async function persistAskChat(pending = askLoading): Promise<void> {
   await saveAskChat({
     scopeRecordingId: askScopeRecordingId,
     scopeMeetingTitle: askScopeMeetingTitle,
     messages: askMessages,
     draftInput: meetingAsk.value,
+    pending,
   });
+}
+
+async function refreshAskFromStorage(): Promise<void> {
+  const chat = await loadAskChat();
+  if (!chat) {
+    return;
+  }
+
+  askMessages = chat.messages ?? [];
+  askScopeRecordingId = chat.scopeRecordingId;
+  askScopeMeetingTitle = chat.scopeMeetingTitle;
+  askLoading = chat.pending === true;
+  meetingAsk.value = chat.draftInput ?? "";
+
+  if (chat.scopeRecordingId) {
+    meetingAskLabel.textContent = `Ask about: ${chat.scopeMeetingTitle ?? "Recording"}`;
+    meetingAskClearScope.classList.remove("hidden");
+  } else {
+    meetingAskLabel.textContent = "Ask about your meetings";
+    meetingAskClearScope.classList.add("hidden");
+  }
+
+  meetingAskBtn.disabled = askLoading;
+  renderAskThread();
+  updateAskChrome();
 }
 
 async function restoreAskChat(): Promise<void> {
@@ -424,22 +453,26 @@ async function restoreAskChat(): Promise<void> {
     return;
   }
 
-  askMessages = chat.messages ?? [];
-  meetingAsk.value = chat.draftInput ?? "";
-  if (chat.scopeRecordingId) {
-    askScopeRecordingId = chat.scopeRecordingId;
-    askScopeMeetingTitle = chat.scopeMeetingTitle;
-    meetingAskLabel.textContent = `Ask about: ${chat.scopeMeetingTitle ?? "Recording"}`;
-    meetingAskClearScope.classList.remove("hidden");
+  await refreshAskFromStorage();
+
+  if (askLoading) {
+    void resumeMeetingAskIfNeeded();
   }
-  renderAskThread();
-  updateAskChrome();
+}
+
+async function resumeMeetingAskIfNeeded(): Promise<void> {
+  try {
+    await chrome.runtime.sendMessage({ type: "ASK_MEETINGS" });
+  } catch {
+    // Background may still be processing; storage listener will update the UI.
+  }
 }
 
 async function clearAskChatUi(): Promise<void> {
   askMessages = [];
   askLoading = false;
   meetingAsk.value = "";
+  meetingAskBtn.disabled = false;
   renderAskThread();
   updateAskChrome();
   await clearAskChat();
@@ -535,49 +568,34 @@ async function runMeetingAsk(): Promise<void> {
     return;
   }
 
-  const gen = ++askRequestGen;
   askMessages.push({ role: "user", content: question });
   meetingAsk.value = "";
   askLoading = true;
   meetingAskBtn.disabled = true;
   renderAskThread();
   updateAskChrome();
-  await persistAskChat();
+  await persistAskChat(true);
 
   try {
-    const response = await askMeetings({
-      messages: askMessages,
-      recordingId: askScopeRecordingId,
-    });
-    if (gen !== askRequestGen) {
+    const result = (await chrome.runtime.sendMessage({ type: "ASK_MEETINGS" })) as
+      | { ok?: boolean; error?: string }
+      | undefined;
+
+    if (result?.ok === false && result.error === "No pending ask") {
+      askLoading = false;
+      meetingAskBtn.disabled = false;
+      await persistAskChat(false);
+      renderAskThread();
       return;
     }
 
-    askMessages.push({
-      role: "assistant",
-      content: response.answer,
-      insufficientContext: response.insufficientContext,
-      citations: response.citations,
-    });
-  } catch (err) {
-    if (gen !== askRequestGen) {
-      return;
-    }
-    const message = err instanceof Error ? err.message : String(err);
-    askMessages.push({
-      role: "assistant",
-      content: message,
-      isError: true,
-    });
-  } finally {
-    if (gen === askRequestGen) {
-      askLoading = false;
-      meetingAskBtn.disabled = false;
-      renderAskThread();
-      updateAskChrome();
-      await persistAskChat();
+    await refreshAskFromStorage();
+    if (!askLoading) {
       meetingAsk.focus();
     }
+  } catch {
+    // Popup may close while the background worker finishes the ask.
+    await refreshAskFromStorage();
   }
 }
 

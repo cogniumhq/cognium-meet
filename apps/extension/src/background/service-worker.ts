@@ -17,7 +17,8 @@ import {
   updateHistoryEntry,
   type StoredRecording,
 } from "../lib/storage.js";
-import { fetchRecordingStatus, pollRecording, uploadRecording } from "../lib/upload.js";
+import { fetchRecordingStatus, pollRecording, uploadRecording, askMeetings } from "../lib/upload.js";
+import { loadAskChat, saveAskChat } from "../lib/storage.js";
 import {
   deletePendingAudio,
   loadPendingAudio,
@@ -32,6 +33,7 @@ export {};
 let recordingState: PersistedRecordingState = { isRecording: false };
 let isFinalizingRecording = false;
 const activeTranscriptionPolls = new Set<string>();
+let askInFlight = false;
 
 interface OffscreenStopResponse {
   type: string;
@@ -156,6 +158,11 @@ async function handleMessage(
         message as { deviceId?: string },
         sendResponse,
       );
+      return;
+    }
+
+    if (message.type === "ASK_MEETINGS") {
+      await handleMeetingAsk(sendResponse);
       return;
     }
 
@@ -968,6 +975,66 @@ async function closeOffscreenDocument(): Promise<void> {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function handleMeetingAsk(
+  sendResponse: (response: unknown) => void,
+): Promise<void> {
+  if (askInFlight) {
+    sendResponse({ ok: false, error: "Ask already in progress" });
+    return;
+  }
+
+  const chat = await loadAskChat();
+  if (!chat?.pending) {
+    sendResponse({ ok: false, error: "No pending ask" });
+    return;
+  }
+
+  askInFlight = true;
+  try {
+    const response = await askMeetings({
+      messages: chat.messages,
+      recordingId: chat.scopeRecordingId,
+    });
+
+    const latest = await loadAskChat();
+    if (!latest?.pending) {
+      sendResponse({ ok: true, skipped: true });
+      return;
+    }
+
+    await saveAskChat({
+      ...latest,
+      pending: false,
+      messages: [
+        ...latest.messages,
+        {
+          role: "assistant",
+          content: response.answer,
+          insufficientContext: response.insufficientContext,
+          citations: response.citations,
+        },
+      ],
+    });
+    sendResponse({ ok: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const latest = await loadAskChat();
+    if (latest?.pending) {
+      await saveAskChat({
+        ...latest,
+        pending: false,
+        messages: [
+          ...latest.messages,
+          { role: "assistant", content: message, isError: true },
+        ],
+      });
+    }
+    sendResponse({ ok: false, error: message });
+  } finally {
+    askInFlight = false;
+  }
 }
 
 async function trackTranscription(id: string): Promise<void> {

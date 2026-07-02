@@ -94,6 +94,8 @@ export interface AskChatState {
   scopeMeetingTitle?: string;
   messages: MeetingAskMessage[];
   draftInput?: string;
+  /** True while the API call is in flight (survives popup close). */
+  pending?: boolean;
 }
 
 export async function loadAskChat(): Promise<AskChatState | undefined> {
