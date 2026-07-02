@@ -1,15 +1,18 @@
 import type { RecordingMeta } from "@cognium/meet-shared";
-import type { MeetingLlmConfig } from "../llm/create-meeting-llm.js";
-import { resolveMeetingLlmModel } from "../llm/create-meeting-llm.js";
+import {
+  meetingLlmConfigFromFields,
+  resolveMeetingLlmModel,
+} from "../llm/create-meeting-llm.js";
 import type { RecordingStore } from "../storage/recording-store.js";
 import type { UserStoreRegistry } from "../storage/user-store-registry.js";
+import { recordingMeetingSettings } from "../parse-client-settings.js";
+import { requireOpenAiApiKey } from "../resolve-openai-key.js";
 import { generateMeetingNotes } from "./generate-meeting-notes.js";
 
 export interface NotesProcessingDeps {
   userRegistry: UserStoreRegistry;
-  llmConfig: MeetingLlmConfig;
-  notesModel: string;
-  notesEnabled: boolean;
+  /** Server fallback when the client does not send a key. */
+  openaiApiKey?: string;
 }
 
 const activeNotesJobs = new Set<string>();
@@ -18,14 +21,41 @@ function notesJobKey(userId: string, id: string): string {
   return `${userId}:${id}`;
 }
 
+export function isNotesJobActive(userId: string, id: string): boolean {
+  return activeNotesJobs.has(notesJobKey(userId, id));
+}
+
+export function shouldGenerateMeetingNotes(meta: RecordingMeta): boolean {
+  if (meta.status !== "completed" || meta.meetingNotesEnabled === false) {
+    return false;
+  }
+  const status = meta.notesStatus;
+  return status === "pending" || status === "processing" || status === undefined;
+}
+
+export async function resumePendingMeetingNotes(deps: NotesProcessingDeps): Promise<void> {
+  const userIds = await deps.userRegistry.listUserIds();
+  for (const userId of userIds) {
+    const { store } = await deps.userRegistry.forUser(userId);
+    const completed = await store.listMetasByStatus("completed");
+    for (const meta of completed) {
+      if (!shouldGenerateMeetingNotes(meta)) {
+        continue;
+      }
+      if (isNotesJobActive(userId, meta.id)) {
+        continue;
+      }
+      console.log(`Resuming meeting notes for user=${userId} id=${meta.id}`);
+      enqueueMeetingNotes(deps, userId, meta.id);
+    }
+  }
+}
+
 export function enqueueMeetingNotes(
   deps: NotesProcessingDeps,
   userId: string,
   id: string,
 ): void {
-  if (!deps.notesEnabled) {
-    return;
-  }
   const key = notesJobKey(userId, id);
   if (activeNotesJobs.has(key)) {
     return;
@@ -47,6 +77,14 @@ async function processMeetingNotes(
     return;
   }
 
+  if (meta.meetingNotesEnabled === false) {
+    await saveNotesMeta(store, meta, {
+      notesStatus: "skipped",
+      notesError: undefined,
+    });
+    return;
+  }
+
   const transcript = await store.readTranscriptJson(id);
   if (!transcript || transcript.segments.length === 0) {
     await saveNotesMeta(store, meta, {
@@ -61,16 +99,42 @@ async function processMeetingNotes(
     notesError: undefined,
   });
 
-  const llmProvider = meta.meetingLlmProvider ?? deps.llmConfig.provider;
-  const notesModel = resolveMeetingLlmModel(deps.llmConfig, deps.notesModel, llmProvider);
+  const clientSettings = recordingMeetingSettings(meta);
+  const llmProvider = clientSettings.meetingLlmProvider;
+  let openaiKey: string | undefined;
+  if (llmProvider === "openai") {
+    try {
+      openaiKey = requireOpenAiApiKey({
+        storedKey: meta.openaiApiKey,
+        serverKey: deps.openaiApiKey,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await saveNotesMeta(store, meta, {
+        notesStatus: "failed",
+        notesError: message,
+      });
+      return;
+    }
+  }
+  const llmConfig = meetingLlmConfigFromFields(openaiKey ?? "", {
+    meetingLlmProvider: clientSettings.meetingLlmProvider,
+    ollamaUrl: clientSettings.ollamaUrl,
+    ollamaModel: clientSettings.ollamaModel,
+  });
+  const notesModel = resolveMeetingLlmModel(
+    llmConfig,
+    clientSettings.meetingLlmModel,
+    llmProvider,
+  );
   console.log(
     `[notes] started user=${userId} id=${id} provider=${llmProvider} model=${notesModel}`,
   );
 
   try {
     const notes = await generateMeetingNotes({
-      llmConfig: deps.llmConfig,
-      llmProvider: meta.meetingLlmProvider,
+      llmConfig,
+      llmProvider,
       model: notesModel,
       recordingId: id,
       meetingTitle: meta.meetingTitle,

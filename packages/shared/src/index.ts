@@ -76,6 +76,25 @@ export interface RecordingMeta {
   notesError?: string;
   /** LLM provider used for Ask/notes (when set per recording). */
   meetingLlmProvider?: MeetingLlmProvider;
+  /** Generate meeting notes after transcription (extension default per upload). */
+  meetingNotesEnabled?: boolean;
+  /** Model for notes + Ask (OpenAI name or Ollama tag). */
+  meetingLlmModel?: string;
+  ollamaUrl?: string;
+  ollamaModel?: string;
+  /** Delete raw audio after successful transcription. */
+  deleteAudioAfterTranscription?: boolean;
+  /**
+   * Per-recording OpenAI key from extension (BYOK). Stored server-side for async jobs;
+   * never returned in API responses.
+   */
+  openaiApiKey?: string;
+}
+
+/** Strip server-only fields before returning recording metadata to clients. */
+export function publicRecordingMeta(meta: RecordingMeta): RecordingMeta {
+  const { openaiApiKey: _openaiApiKey, ...rest } = meta;
+  return rest;
 }
 
 export const TRANSCRIPTION_MODELS = [
@@ -146,6 +165,101 @@ export type MeetingLlmProvider = "openai" | "ollama";
 export const MEETING_LLM_PROVIDERS = ["openai", "ollama"] as const;
 export const DEFAULT_MEETING_LLM_PROVIDER: MeetingLlmProvider = "openai";
 
+export const DEFAULT_MEETING_LLM_MODEL = "gpt-4o-mini";
+export const DEFAULT_OLLAMA_URL = "http://localhost:11434";
+export const DEFAULT_OLLAMA_MODEL = "qwen2.5:7b";
+
+export const OPENAI_MEETING_LLM_MODELS = [
+  "gpt-4o-mini",
+  "gpt-4o",
+  "gpt-4.1-mini",
+  "gpt-4.1",
+] as const;
+
+export const OLLAMA_MEETING_LLM_MODELS = [
+  "qwen2.5:7b",
+  "llama3.2",
+  "mistral",
+  "phi3:mini",
+  "gemma2:9b",
+] as const;
+
+export type OpenAiMeetingLlmModel = (typeof OPENAI_MEETING_LLM_MODELS)[number];
+export type OllamaMeetingLlmModel = (typeof OLLAMA_MEETING_LLM_MODELS)[number];
+
+export function meetingLlmModelsForProvider(
+  provider: MeetingLlmProvider,
+): readonly string[] {
+  return provider === "ollama" ? OLLAMA_MEETING_LLM_MODELS : OPENAI_MEETING_LLM_MODELS;
+}
+
+export function defaultMeetingLlmModelForProvider(provider: MeetingLlmProvider): string {
+  return provider === "ollama" ? DEFAULT_OLLAMA_MODEL : DEFAULT_MEETING_LLM_MODEL;
+}
+
+export function meetingLlmModelLabel(model: string): string {
+  switch (model) {
+    case "gpt-4o-mini":
+      return "GPT-4o mini (fast, low cost)";
+    case "gpt-4o":
+      return "GPT-4o (higher quality)";
+    case "gpt-4.1-mini":
+      return "GPT-4.1 mini";
+    case "gpt-4.1":
+      return "GPT-4.1";
+    case "qwen2.5:7b":
+      return "Qwen 2.5 7B";
+    case "llama3.2":
+      return "Llama 3.2";
+    case "mistral":
+      return "Mistral";
+    case "phi3:mini":
+      return "Phi-3 mini";
+    case "gemma2:9b":
+      return "Gemma 2 9B";
+    default:
+      return model;
+  }
+}
+
+export const DEFAULT_MAX_UPLOAD_MB = 150;
+/** Hard server ceiling for request body size (not configurable via env). */
+export const ABSOLUTE_MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
+export const DEFAULT_DELETE_AUDIO_AFTER_TRANSCRIPTION = true;
+export const DEFAULT_MEETING_NOTES_ENABLED = true;
+export const DEFAULT_MEETING_ASK_ENABLED = true;
+
+export function parseBooleanSetting(value: unknown, fallback: boolean): boolean {
+  if (value === true || value === "true") {
+    return true;
+  }
+  if (value === false || value === "false") {
+    return false;
+  }
+  return fallback;
+}
+
+export function parseMaxUploadMb(
+  value: unknown,
+  fallback: number = DEFAULT_MAX_UPLOAD_MB,
+): number {
+  const parsed =
+    typeof value === "string"
+      ? Number.parseInt(value, 10)
+      : typeof value === "number"
+        ? value
+        : Number.NaN;
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return fallback;
+  }
+  const ceilingMb = Math.floor(ABSOLUTE_MAX_UPLOAD_BYTES / (1024 * 1024));
+  return Math.min(parsed, ceilingMb);
+}
+
+export function maxUploadBytesFromMb(mb: number): number {
+  return parseMaxUploadMb(mb) * 1024 * 1024;
+}
+
 export function parseMeetingLlmProvider(
   value: unknown,
   fallback: MeetingLlmProvider = DEFAULT_MEETING_LLM_PROVIDER,
@@ -173,6 +287,9 @@ export interface MeetingAskRequest {
   messages?: MeetingAskMessage[];
   /** Optional provider override for this ask call */
   llmProvider?: MeetingLlmProvider;
+  meetingLlmModel?: string;
+  ollamaUrl?: string;
+  ollamaModel?: string;
   /** Limit to one meeting; omit to search across all saved meetings. */
   recordingId?: string;
 }
@@ -206,6 +323,13 @@ export function formatMeetingAskConversation(messages: MeetingAskMessage[]): str
 }
 
 export const COGNIUM_USER_ID_HEADER = "X-Cognium-User-Id";
+/** Extension sends the user's OpenAI key; server uses it when OPENAI_API_KEY is unset. */
+export const OPENAI_API_KEY_HEADER = "X-OpenAI-Key";
+
+export function parseOpenAiKeyHeader(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
 
 /** UUID v4 assigned per Chrome profile (chrome.storage.local). */
 export function isValidCogniumUserId(value: string): boolean {
@@ -223,6 +347,13 @@ export interface ExtensionSettings {
   captureMode?: AudioCaptureMode;
   /** Provider for Ask + meeting notes */
   meetingLlmProvider?: MeetingLlmProvider;
+  meetingNotesEnabled?: boolean;
+  meetingAskEnabled?: boolean;
+  meetingLlmModel?: string;
+  ollamaUrl?: string;
+  ollamaModel?: string;
+  deleteAudioAfterTranscription?: boolean;
+  maxUploadMb?: number;
   /** Chrome media deviceId for audioinput; empty = Chrome default */
   microphoneDeviceId?: string;
 }

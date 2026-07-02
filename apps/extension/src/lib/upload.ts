@@ -1,11 +1,15 @@
 import type { MeetingAskRequest, MeetingAskResponse, RecordingMeta, TranscriptResult } from "@cognium/meet-shared";
 import {
   DEFAULT_AUDIO_CAPTURE_MODE,
-  DEFAULT_MEETING_LLM_PROVIDER,
   DEFAULT_TRANSCRIPTION_MODEL,
 } from "@cognium/meet-shared";
 import { buildApiHeaders, getApiUrl } from "./api-headers.js";
 import { isLikelyAudio } from "./audio-bytes.js";
+import {
+  maxUploadBytesForSettings,
+  meetingAskPayload,
+  meetingSettingsFormFields,
+} from "./client-config.js";
 import { getSettings } from "./storage.js";
 
 export interface UploadResult {
@@ -29,6 +33,14 @@ export async function uploadRecording(params: {
   }
 
   const settings = await getSettings();
+  const maxBytes = maxUploadBytesForSettings(settings);
+  if (params.bytes.length > maxBytes) {
+    const maxMb = Math.round(maxBytes / (1024 * 1024));
+    throw new Error(
+      `Recording too large (${Math.round(params.bytes.length / (1024 * 1024))} MB). Max upload is ${maxMb} MB — increase it in Settings or record a shorter meeting.`,
+    );
+  }
+
   const headers = await buildApiHeaders();
 
   const form = new FormData();
@@ -57,10 +69,9 @@ export async function uploadRecording(params: {
     "captureMode",
     settings.captureMode ?? DEFAULT_AUDIO_CAPTURE_MODE,
   );
-  form.append(
-    "meetingLlmProvider",
-    settings.meetingLlmProvider ?? DEFAULT_MEETING_LLM_PROVIDER,
-  );
+  for (const [key, value] of Object.entries(meetingSettingsFormFields(settings))) {
+    form.append(key, value);
+  }
 
   const response = await fetch(`${settings.apiUrl}/v1/recordings`, {
     method: "POST",
@@ -98,7 +109,7 @@ export async function retryRecording(id: string): Promise<RecordingMeta> {
     body: JSON.stringify({
       transcriptionModel: settings.transcriptionModel ?? DEFAULT_TRANSCRIPTION_MODEL,
       captureMode: settings.captureMode ?? DEFAULT_AUDIO_CAPTURE_MODE,
-      meetingLlmProvider: settings.meetingLlmProvider ?? DEFAULT_MEETING_LLM_PROVIDER,
+      ...meetingSettingsFormFields(settings),
     }),
   });
   if (!response.ok) {
@@ -210,7 +221,7 @@ export async function askMeetings(
   const headers = await buildApiHeaders({ "Content-Type": "application/json" });
   const payload = normalizeAskRequest({
     ...request,
-    llmProvider: settings.meetingLlmProvider ?? DEFAULT_MEETING_LLM_PROVIDER,
+    ...meetingAskPayload(settings),
   });
 
   const response = await fetch(`${apiUrl}/v1/ask`, {

@@ -2,13 +2,21 @@ import type { ExtensionSettings, MeetingAskMessage, NotesStatus, TranscriptionPr
 import {
   DEFAULT_API_URL,
   DEFAULT_AUDIO_CAPTURE_MODE,
+  DEFAULT_DELETE_AUDIO_AFTER_TRANSCRIPTION,
+  DEFAULT_MAX_UPLOAD_MB,
+  DEFAULT_MEETING_ASK_ENABLED,
+  DEFAULT_MEETING_LLM_MODEL,
   DEFAULT_MEETING_LLM_PROVIDER,
+  DEFAULT_MEETING_NOTES_ENABLED,
+  DEFAULT_OLLAMA_MODEL,
+  DEFAULT_OLLAMA_URL,
   DEFAULT_TRANSCRIPTION_MODEL,
   mergeTranscriptionProgress,
 } from "@cognium/meet-shared";
 
 const SETTINGS_KEY = "settings";
 const USER_ID_KEY = "cogniumUserId";
+const OPENAI_KEY_STORAGE_KEY = "openaiApiKey";
 
 const DEFAULT_SETTINGS: ExtensionSettings = {
   apiUrl: DEFAULT_API_URL,
@@ -16,6 +24,13 @@ const DEFAULT_SETTINGS: ExtensionSettings = {
   transcriptionModel: DEFAULT_TRANSCRIPTION_MODEL,
   captureMode: DEFAULT_AUDIO_CAPTURE_MODE,
   meetingLlmProvider: DEFAULT_MEETING_LLM_PROVIDER,
+  meetingNotesEnabled: DEFAULT_MEETING_NOTES_ENABLED,
+  meetingAskEnabled: DEFAULT_MEETING_ASK_ENABLED,
+  meetingLlmModel: DEFAULT_MEETING_LLM_MODEL,
+  ollamaUrl: DEFAULT_OLLAMA_URL,
+  ollamaModel: DEFAULT_OLLAMA_MODEL,
+  deleteAudioAfterTranscription: DEFAULT_DELETE_AUDIO_AFTER_TRANSCRIPTION,
+  maxUploadMb: DEFAULT_MAX_UPLOAD_MB,
 };
 
 export async function getSettings(): Promise<ExtensionSettings> {
@@ -26,6 +41,22 @@ export async function getSettings(): Promise<ExtensionSettings> {
 
 export async function saveSettings(settings: ExtensionSettings): Promise<void> {
   await chrome.storage.sync.set({ [SETTINGS_KEY]: settings });
+}
+
+/** User's OpenAI key — local only (not synced across Chrome profiles). */
+export async function getOpenAiApiKey(): Promise<string | undefined> {
+  const result = await chrome.storage.local.get(OPENAI_KEY_STORAGE_KEY);
+  const key = result[OPENAI_KEY_STORAGE_KEY];
+  return typeof key === "string" && key.trim() ? key.trim() : undefined;
+}
+
+export async function saveOpenAiApiKey(key: string | undefined): Promise<void> {
+  const trimmed = key?.trim();
+  if (trimmed) {
+    await chrome.storage.local.set({ [OPENAI_KEY_STORAGE_KEY]: trimmed });
+  } else {
+    await chrome.storage.local.remove(OPENAI_KEY_STORAGE_KEY);
+  }
 }
 
 /** Stable per Chrome profile — stored in local (not sync) storage. */

@@ -2,11 +2,15 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
 import { v4 as uuidv4 } from "uuid";
-import { COGNIUM_USER_ID_HEADER, type RecordingMeta } from "@cognium/meet-shared";
+import { COGNIUM_USER_ID_HEADER, OPENAI_API_KEY_HEADER, type RecordingMeta } from "@cognium/meet-shared";
 import {
+  ABSOLUTE_MAX_UPLOAD_BYTES,
+  maxUploadBytesFromMb,
   parseAudioCaptureMode,
   parseMeetingLlmProvider,
+  parseOpenAiKeyHeader,
   parseTranscriptionModel,
+  publicRecordingMeta,
 } from "@cognium/meet-shared";
 import type { RecordingStore } from "./storage/recording-store.js";
 import type { SearchIndex } from "./storage/search-index.js";
@@ -18,7 +22,7 @@ import {
   isTranscriptionActive,
   type ProcessingDeps,
 } from "./transcription/process-recording.js";
-import { enqueueMeetingNotes } from "./notes/process-notes.js";
+import { enqueueMeetingNotes, isNotesJobActive, shouldGenerateMeetingNotes } from "./notes/process-notes.js";
 import { requestLog } from "./middleware/request-log.js";
 import { answerMeetingQuestion } from "./ask/answer-meeting-question.js";
 import {
@@ -27,8 +31,16 @@ import {
 } from "./ask/parse-ask-request.js";
 import { parseUserIdHeader } from "./storage/user-id.js";
 import type { UserStoreRegistry } from "./storage/user-store-registry.js";
-import type { MeetingLlmConfig } from "./llm/create-meeting-llm.js";
-import { resolveMeetingLlmModel } from "./llm/create-meeting-llm.js";
+import {
+  meetingLlmConfigFromFields,
+  resolveMeetingLlmModel,
+} from "./llm/create-meeting-llm.js";
+import {
+  clientSettingsToRecordingFields,
+  parseClientMeetingSettings,
+  recordingMeetingSettings,
+} from "./parse-client-settings.js";
+import { requireOpenAiApiKey } from "./resolve-openai-key.js";
 
 type AppVariables = {
   userId: string;
@@ -38,12 +50,8 @@ type AppVariables = {
 
 interface AppDeps extends ProcessingDeps {
   userRegistry: UserStoreRegistry;
-  llmConfig: MeetingLlmConfig;
   apiToken?: string;
-  maxUploadBytes?: number;
   defaultCaptureMode?: import("@cognium/meet-shared").AudioCaptureMode;
-  askEnabled: boolean;
-  askModel: string;
 }
 
 export function createApp(deps: AppDeps) {
@@ -53,7 +61,12 @@ export function createApp(deps: AppDeps) {
     "*",
     cors({
       origin: (origin) => origin ?? "*",
-      allowHeaders: ["Authorization", "Content-Type", COGNIUM_USER_ID_HEADER],
+      allowHeaders: [
+        "Authorization",
+        "Content-Type",
+        COGNIUM_USER_ID_HEADER,
+        OPENAI_API_KEY_HEADER,
+      ],
       allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
     }),
   );
@@ -91,10 +104,6 @@ export function createApp(deps: AppDeps) {
   });
 
   app.post("/v1/ask", async (c) => {
-    if (!deps.askEnabled) {
-      return c.json({ error: "Meeting Q&A is disabled on this server" }, 503);
-    }
-
     const store = c.get("store");
     const searchIndex = c.get("searchIndex");
 
@@ -103,6 +112,9 @@ export function createApp(deps: AppDeps) {
       recordingId?: string;
       messages?: unknown;
       llmProvider?: unknown;
+      meetingLlmModel?: unknown;
+      ollamaUrl?: unknown;
+      ollamaModel?: unknown;
     };
     try {
       body = await c.req.json();
@@ -119,10 +131,12 @@ export function createApp(deps: AppDeps) {
       typeof body.recordingId === "string" && body.recordingId.trim()
         ? body.recordingId.trim()
         : undefined;
-    const llmProvider = parseMeetingLlmProvider(body.llmProvider, deps.llmConfig.provider);
 
+    let clientSettings = parseClientMeetingSettings(body);
+    let recordingMeta: RecordingMeta | null = null;
     if (recordingId) {
       const meta = await store.getMeta(recordingId);
+      recordingMeta = meta;
       if (!meta) {
         return c.json({ error: "Recording not found" }, 404);
       }
@@ -132,7 +146,53 @@ export function createApp(deps: AppDeps) {
           409,
         );
       }
+      const stored = recordingMeetingSettings(meta);
+      clientSettings = parseClientMeetingSettings({
+        ...stored,
+        meetingLlmProvider: parseMeetingLlmProvider(
+          body.llmProvider,
+          stored.meetingLlmProvider,
+        ),
+        meetingLlmModel:
+          typeof body.meetingLlmModel === "string" && body.meetingLlmModel.trim()
+            ? body.meetingLlmModel.trim()
+            : stored.meetingLlmModel,
+        ollamaUrl:
+          typeof body.ollamaUrl === "string" && body.ollamaUrl.trim()
+            ? body.ollamaUrl.trim()
+            : stored.ollamaUrl,
+        ollamaModel:
+          typeof body.ollamaModel === "string" && body.ollamaModel.trim()
+            ? body.ollamaModel.trim()
+            : stored.ollamaModel,
+      });
     }
+
+    const llmProvider = clientSettings.meetingLlmProvider;
+    const requestOpenAiKey = parseOpenAiKeyHeader(c.req.header(OPENAI_API_KEY_HEADER));
+    let openaiKey = "";
+    if (llmProvider === "openai") {
+      try {
+        openaiKey = requireOpenAiApiKey({
+          requestKey: requestOpenAiKey,
+          storedKey: recordingMeta?.openaiApiKey,
+          serverKey: deps.openaiApiKey,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return c.json({ error: message }, 400);
+      }
+    }
+    const llmConfig = meetingLlmConfigFromFields(openaiKey, {
+      meetingLlmProvider: clientSettings.meetingLlmProvider,
+      ollamaUrl: clientSettings.ollamaUrl,
+      ollamaModel: clientSettings.ollamaModel,
+    });
+    const askModel = resolveMeetingLlmModel(
+      llmConfig,
+      clientSettings.meetingLlmModel,
+      llmProvider,
+    );
 
     const { context, citations, meetingCount } = await buildAskContextForMessages({
       store,
@@ -142,15 +202,14 @@ export function createApp(deps: AppDeps) {
     });
 
     const result = await answerMeetingQuestion({
-      llmConfig: deps.llmConfig,
+      llmConfig,
       llmProvider,
-      model: deps.askModel,
+      model: askModel,
       messages,
       context,
       citations,
     });
 
-    const askModel = resolveMeetingLlmModel(deps.llmConfig, deps.askModel, llmProvider);
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     console.log(
       `[ask] provider=${llmProvider} model=${askModel} turns=${messages.length} question=${JSON.stringify((lastUser?.content ?? "").slice(0, 80))} meetings=${meetingCount} insufficient=${result.insufficientContext}`,
@@ -164,17 +223,15 @@ export function createApp(deps: AppDeps) {
     });
   });
 
-  const maxUploadBytes = deps.maxUploadBytes ?? 150 * 1024 * 1024;
-
   app.post(
     "/v1/recordings",
     bodyLimit({
-      maxSize: maxUploadBytes,
+      maxSize: ABSOLUTE_MAX_UPLOAD_BYTES,
       onError: (c) =>
         c.json(
           {
             error: "Payload too large",
-            detail: `Maximum upload size is ${maxUploadBytes} bytes`,
+            detail: `Maximum upload size is ${ABSOLUTE_MAX_UPLOAD_BYTES} bytes`,
           },
           413,
         ),
@@ -190,7 +247,7 @@ export function createApp(deps: AppDeps) {
       let durationMs: number | undefined;
       let transcriptionModel = deps.defaultTranscriptionModel;
       let captureMode = deps.defaultCaptureMode ?? "mixed";
-      let meetingLlmProvider = deps.llmConfig.provider;
+      let clientSettings = parseClientMeetingSettings({});
 
       if (contentType.includes("multipart/form-data")) {
         const form = await c.req.parseBody();
@@ -219,10 +276,7 @@ export function createApp(deps: AppDeps) {
           form.captureMode,
           deps.defaultCaptureMode ?? "mixed",
         );
-        meetingLlmProvider = parseMeetingLlmProvider(
-          form.meetingLlmProvider,
-          deps.llmConfig.provider,
-        );
+        clientSettings = parseClientMeetingSettings(form as Record<string, unknown>);
 
         buffer = Buffer.from(await audio.arrayBuffer());
 
@@ -241,6 +295,12 @@ export function createApp(deps: AppDeps) {
           transcriptionModel?: string;
           captureMode?: string;
           meetingLlmProvider?: string;
+          meetingNotesEnabled?: boolean | string;
+          meetingLlmModel?: string;
+          ollamaUrl?: string;
+          ollamaModel?: string;
+          deleteAudioAfterTranscription?: boolean | string;
+          maxUploadMb?: number | string;
         };
         try {
           body = await c.req.json();
@@ -267,9 +327,26 @@ export function createApp(deps: AppDeps) {
           body.captureMode,
           deps.defaultCaptureMode ?? "mixed",
         );
-        meetingLlmProvider = parseMeetingLlmProvider(
-          body.meetingLlmProvider,
-          deps.llmConfig.provider,
+        clientSettings = parseClientMeetingSettings(body);
+      }
+
+      const maxUploadBytes = maxUploadBytesFromMb(clientSettings.maxUploadMb);
+      if (buffer.length > maxUploadBytes) {
+        return c.json(
+          {
+            error: "Payload too large",
+            detail: `Maximum upload size is ${maxUploadBytes} bytes (${clientSettings.maxUploadMb} MB)`,
+          },
+          413,
+        );
+      }
+      if (micBuffer && micBuffer.length > maxUploadBytes) {
+        return c.json(
+          {
+            error: "Payload too large",
+            detail: `Mic audio exceeds maximum upload size of ${maxUploadBytes} bytes`,
+          },
+          413,
         );
       }
 
@@ -281,6 +358,17 @@ export function createApp(deps: AppDeps) {
           },
           400,
         );
+      }
+
+      const requestOpenAiKey = parseOpenAiKeyHeader(c.req.header(OPENAI_API_KEY_HEADER));
+      try {
+        requireOpenAiApiKey({
+          requestKey: requestOpenAiKey,
+          serverKey: deps.openaiApiKey,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return c.json({ error: message }, 400);
       }
 
       const id = uuidv4();
@@ -297,8 +385,10 @@ export function createApp(deps: AppDeps) {
         status: "processing",
         transcriptionModel,
         captureMode,
-        meetingLlmProvider,
+        ...clientSettingsToRecordingFields(clientSettings),
+        ...(requestOpenAiKey ? { openaiApiKey: requestOpenAiKey } : {}),
         processingStartedAt: new Date().toISOString(),
+        notesStatus: clientSettings.meetingNotesEnabled ? "pending" : "skipped",
       };
       await store.saveMeta(meta);
 
@@ -325,6 +415,18 @@ export function createApp(deps: AppDeps) {
       return c.json({ id, status: meta.status });
     }
 
+    const requestOpenAiKey = parseOpenAiKeyHeader(c.req.header(OPENAI_API_KEY_HEADER));
+    try {
+      requireOpenAiApiKey({
+        requestKey: requestOpenAiKey,
+        storedKey: meta.openaiApiKey,
+        serverKey: deps.openaiApiKey,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, 400);
+    }
+
     if (!(await store.audioExists(id))) {
       return c.json(
         {
@@ -336,22 +438,23 @@ export function createApp(deps: AppDeps) {
     }
 
     let retryModel = meta.transcriptionModel ?? deps.defaultTranscriptionModel;
-    let retryLlmProvider = meta.meetingLlmProvider ?? deps.llmConfig.provider;
+    let clientSettings = recordingMeetingSettings(meta);
     try {
-      const body = await c.req.json<{
-        transcriptionModel?: string;
-        meetingLlmProvider?: string;
-      }>();
+      const body = await c.req.json<Record<string, unknown>>();
       if (body.transcriptionModel) {
         retryModel = parseTranscriptionModel(
           body.transcriptionModel,
           deps.defaultTranscriptionModel,
         );
       }
-      retryLlmProvider = parseMeetingLlmProvider(
-        body.meetingLlmProvider,
-        retryLlmProvider,
-      );
+      clientSettings = parseClientMeetingSettings({
+        ...clientSettings,
+        ...body,
+        meetingLlmProvider: parseMeetingLlmProvider(
+          body.meetingLlmProvider,
+          clientSettings.meetingLlmProvider,
+        ),
+      });
     } catch {
       // empty body is fine — use stored model
     }
@@ -361,9 +464,10 @@ export function createApp(deps: AppDeps) {
       status: "processing",
       error: undefined,
       transcriptionModel: retryModel,
-      meetingLlmProvider: retryLlmProvider,
+      ...clientSettingsToRecordingFields(clientSettings),
+      ...(requestOpenAiKey ? { openaiApiKey: requestOpenAiKey } : {}),
       processingStartedAt: new Date().toISOString(),
-      notesStatus: deps.notesEnabled ? "pending" : "skipped",
+      notesStatus: clientSettings.meetingNotesEnabled ? "pending" : "skipped",
       notesError: undefined,
     });
 
@@ -384,18 +488,20 @@ export function createApp(deps: AppDeps) {
     if (isProcessingStale(meta)) {
       if (await store.audioExists(id)) {
         if (isTranscriptionActive(userId, id)) {
-          return c.json(meta);
+          return c.json(publicRecordingMeta(meta));
         }
         enqueueTranscription(deps, userId, id);
-        return c.json({
-          ...meta,
-          status: "processing",
-          error: undefined,
-          progress: meta.progress ?? {
-            phase: "preparing",
-            label: "Resuming transcription…",
-          },
-        });
+        return c.json(
+          publicRecordingMeta({
+            ...meta,
+            status: "processing",
+            error: undefined,
+            progress: meta.progress ?? {
+              phase: "preparing",
+              label: "Resuming transcription…",
+            },
+          }),
+        );
       }
 
       const failed: RecordingMeta = {
@@ -405,10 +511,14 @@ export function createApp(deps: AppDeps) {
         processingStartedAt: undefined,
       };
       await store.saveMeta(failed);
-      return c.json(failed);
+      return c.json(publicRecordingMeta(failed));
     }
 
-    return c.json(meta);
+    if (shouldGenerateMeetingNotes(meta) && !isNotesJobActive(userId, id)) {
+      enqueueMeetingNotes(deps, userId, id);
+    }
+
+    return c.json(publicRecordingMeta(meta));
   });
 
   app.get("/v1/recordings/:id/transcript.txt", async (c) => {
@@ -502,19 +612,26 @@ export function createApp(deps: AppDeps) {
     if (meta.status !== "completed") {
       return c.json({ error: "Transcript not ready", status: meta.status }, 409);
     }
-    if (!deps.notesEnabled) {
-      return c.json({ error: "Meeting notes are disabled on this server" }, 503);
+    if (meta.meetingNotesEnabled === false) {
+      return c.json({ error: "Meeting notes are disabled for this recording" }, 503);
     }
-    let llmProvider = meta.meetingLlmProvider ?? deps.llmConfig.provider;
+    let clientSettings = recordingMeetingSettings(meta);
     try {
-      const body = await c.req.json<{ llmProvider?: string }>();
-      llmProvider = parseMeetingLlmProvider(body.llmProvider, llmProvider);
+      const body = await c.req.json<Record<string, unknown>>();
+      clientSettings = parseClientMeetingSettings({
+        ...clientSettings,
+        ...body,
+        meetingLlmProvider: parseMeetingLlmProvider(
+          body.llmProvider ?? body.meetingLlmProvider,
+          clientSettings.meetingLlmProvider,
+        ),
+      });
     } catch {
       // empty body is fine
     }
     await store.saveMeta({
       ...meta,
-      meetingLlmProvider: llmProvider,
+      ...clientSettingsToRecordingFields(clientSettings),
       notesStatus: "pending",
       notesError: undefined,
     });

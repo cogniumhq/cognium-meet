@@ -15,6 +15,7 @@ import {
   SPEAKER_YOU,
 } from "./merge-segments.js";
 import { enqueueMeetingNotes, type NotesProcessingDeps } from "../notes/process-notes.js";
+import { requireOpenAiApiKey } from "../resolve-openai-key.js";
 
 async function saveProgress(
   store: RecordingStore,
@@ -35,9 +36,11 @@ async function saveProgress(
 }
 
 export interface ProcessingDeps extends NotesProcessingDeps {
-  getTranscriptionProvider: (model: TranscriptionModel) => TranscriptionProvider;
+  getTranscriptionProvider: (
+    model: TranscriptionModel,
+    apiKey?: string,
+  ) => TranscriptionProvider;
   defaultTranscriptionModel: TranscriptionModel;
-  deleteAudioAfterTranscription: boolean;
 }
 
 const PROCESSING_STALE_MS = 90 * 60 * 1000;
@@ -141,7 +144,11 @@ export async function processRecording(
   const model = dualTrack
     ? "whisper-1"
     : (meta.transcriptionModel ?? deps.defaultTranscriptionModel);
-  const transcription = deps.getTranscriptionProvider(model);
+  const openaiKey = requireOpenAiApiKey({
+    storedKey: meta.openaiApiKey,
+    serverKey: deps.openaiApiKey,
+  });
+  const transcription = deps.getTranscriptionProvider(model, openaiKey);
 
   await store.saveMeta({
     ...meta,
@@ -149,7 +156,7 @@ export async function processRecording(
     error: undefined,
     processingStartedAt: new Date().toISOString(),
     transcriptionModel: model,
-    notesStatus: deps.notesEnabled ? "pending" : "skipped",
+    notesStatus: meta.meetingNotesEnabled === false ? "skipped" : "pending",
     notesError: undefined,
   });
 
@@ -160,7 +167,7 @@ export async function processRecording(
   const result = dualTrack
     ? await transcribeDualTrack(
         store,
-        deps.getTranscriptionProvider("whisper-1"),
+        deps.getTranscriptionProvider("whisper-1", openaiKey),
         id,
         meta,
       )
@@ -196,7 +203,7 @@ export async function processRecording(
     processingStartedAt: undefined,
     progress: undefined,
     transcriptionModel: model,
-    notesStatus: deps.notesEnabled ? "pending" : "skipped",
+    notesStatus: meta.meetingNotesEnabled === false ? "skipped" : "pending",
     notesError: undefined,
   };
   await store.saveMeta(completed);
@@ -207,7 +214,7 @@ export async function processRecording(
 
   enqueueMeetingNotes(deps, userId, id);
 
-  if (deps.deleteAudioAfterTranscription) {
+  if (meta.deleteAudioAfterTranscription !== false) {
     await store.deleteAudio(id);
   }
 }

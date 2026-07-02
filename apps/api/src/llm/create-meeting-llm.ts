@@ -1,5 +1,10 @@
 import { ai } from "@ax-llm/ax";
-import type { MeetingLlmProvider } from "@cognium/meet-shared";
+import {
+  DEFAULT_MEETING_LLM_PROVIDER,
+  DEFAULT_OLLAMA_MODEL,
+  DEFAULT_OLLAMA_URL,
+  type MeetingLlmProvider,
+} from "@cognium/meet-shared";
 
 export interface MeetingLlmConfig {
   provider: MeetingLlmProvider;
@@ -14,6 +19,22 @@ export function normalizeOllamaUrl(url: string): string {
     return trimmed;
   }
   return `${trimmed}/v1`;
+}
+
+export function meetingLlmConfigFromFields(
+  openaiApiKey: string,
+  fields: {
+    meetingLlmProvider?: MeetingLlmProvider;
+    ollamaUrl?: string;
+    ollamaModel?: string;
+  },
+): MeetingLlmConfig {
+  return {
+    provider: fields.meetingLlmProvider ?? DEFAULT_MEETING_LLM_PROVIDER,
+    openaiApiKey,
+    ollamaUrl: normalizeOllamaUrl(fields.ollamaUrl ?? DEFAULT_OLLAMA_URL),
+    ollamaModel: fields.ollamaModel ?? DEFAULT_OLLAMA_MODEL,
+  };
 }
 
 export function createMeetingLlm(

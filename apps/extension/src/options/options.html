@@ -17,7 +17,10 @@
       <div class="settings-panel" id="settings-root">
         <section class="settings-card">
           <h3>API connection</h3>
-          <p>Your OpenAI key stays on the server. Only the API URL and bearer token are stored here.</p>
+          <p>
+            API URL and token identify your Cognium Meet server. Your OpenAI key is stored
+            locally on this device (not synced) and sent to the API only when needed.
+          </p>
 
           <div class="field">
             <label for="api-url">API URL</label>
@@ -29,6 +32,25 @@
             <div class="token-row">
               <input id="api-token" type="password" placeholder="Bearer token" autocomplete="off" />
               <button id="token-toggle" type="button" class="token-toggle" aria-pressed="false">
+                Show
+              </button>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="openai-api-key">OpenAI API key</label>
+            <p class="field-hint">
+              Required for transcription and for notes/Ask when using OpenAI. Optional if your
+              server has <code>OPENAI_API_KEY</code> set.
+            </p>
+            <div class="token-row">
+              <input
+                id="openai-api-key"
+                type="password"
+                placeholder="sk-…"
+                autocomplete="off"
+              />
+              <button id="openai-key-toggle" type="button" class="token-toggle" aria-pressed="false">
                 Show
               </button>
             </div>
@@ -54,7 +76,7 @@
 
         <section class="settings-card">
           <h3>Transcription</h3>
-          <p>Choose speed vs speaker labels. Your OpenAI key on the server must have access to the selected model.</p>
+          <p>Choose speed vs speaker labels. Requires an OpenAI key (extension or server).</p>
           <p id="dual-track-note" class="settings-note hidden">
             Dual-track uses Whisper only — speakers are labeled <strong>You</strong> (mic) and <strong>Others</strong> (tab).
           </p>
@@ -62,6 +84,53 @@
           <div class="field">
             <label for="transcription-model">Model</label>
             <select id="transcription-model"></select>
+          </div>
+        </section>
+
+        <section class="settings-card">
+          <h3>Meeting AI &amp; storage</h3>
+          <p>Notes, Q&amp;A, Ollama, upload limits, and whether raw audio is kept after transcription.</p>
+
+          <div class="field field--checkbox">
+            <label>
+              <input id="meeting-notes-enabled" type="checkbox" checked />
+              Auto-generate meeting notes after transcription
+            </label>
+          </div>
+
+          <div class="field field--checkbox">
+            <label>
+              <input id="meeting-ask-enabled" type="checkbox" checked />
+              Enable meeting Q&amp;A in the popup
+            </label>
+          </div>
+
+          <div class="field">
+            <label for="meeting-llm-model">Meeting AI model (notes + Ask)</label>
+            <select id="meeting-llm-model"></select>
+          </div>
+
+          <div id="ollama-fields">
+            <div class="field">
+              <label for="ollama-url">Ollama URL</label>
+              <input
+                id="ollama-url"
+                type="url"
+                placeholder="http://localhost:11434"
+              />
+            </div>
+          </div>
+
+          <div class="field field--checkbox">
+            <label>
+              <input id="delete-audio-after-transcription" type="checkbox" checked />
+              Delete raw audio after transcription
+            </label>
+          </div>
+
+          <div class="field">
+            <label for="max-upload-mb">Max upload size (MB)</label>
+            <input id="max-upload-mb" type="number" min="1" max="200" step="1" />
           </div>
         </section>
 

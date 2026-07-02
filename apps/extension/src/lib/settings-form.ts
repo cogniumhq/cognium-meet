@@ -5,12 +5,17 @@ import {
   openExtensionMicSettings,
   requestMicAccessViaBackground,
 } from "./mic-access.js";
-import { getSettings, saveSettings } from "./storage.js";
+import { getSettings, getOpenAiApiKey, saveOpenAiApiKey, saveSettings } from "./storage.js";
 import {
   AUDIO_CAPTURE_MODES,
   audioCaptureModeLabel,
+  DEFAULT_MAX_UPLOAD_MB,
   DEFAULT_MEETING_LLM_PROVIDER,
+  DEFAULT_OLLAMA_URL,
   DEFAULT_TRANSCRIPTION_MODEL,
+  defaultMeetingLlmModelForProvider,
+  meetingLlmModelLabel,
+  meetingLlmModelsForProvider,
   MEETING_LLM_PROVIDERS,
   meetingLlmProviderLabel,
   TRANSCRIPTION_MODELS,
@@ -24,6 +29,8 @@ export interface SettingsFormElements {
   apiUrlInput: HTMLInputElement;
   apiTokenInput: HTMLInputElement;
   tokenToggleBtn: HTMLButtonElement;
+  openaiApiKeyInput: HTMLInputElement;
+  openaiKeyToggleBtn: HTMLButtonElement;
   saveBtn: HTMLButtonElement;
   saveStatus: HTMLElement;
   micBadge: HTMLElement;
@@ -35,6 +42,13 @@ export interface SettingsFormElements {
   transcriptionModelSelect: HTMLSelectElement;
   captureModeSelect: HTMLSelectElement;
   meetingLlmProviderSelect: HTMLSelectElement;
+  meetingNotesEnabledInput: HTMLInputElement;
+  meetingAskEnabledInput: HTMLInputElement;
+  meetingLlmModelSelect: HTMLSelectElement;
+  ollamaUrlInput: HTMLInputElement;
+  ollamaFields: HTMLElement;
+  deleteAudioInput: HTMLInputElement;
+  maxUploadMbInput: HTMLInputElement;
   captureModeHint: HTMLElement;
   dualTrackNote: HTMLElement;
 }
@@ -44,6 +58,8 @@ export function getSettingsFormElements(root: ParentNode): SettingsFormElements 
     apiUrlInput: root.querySelector("#api-url") as HTMLInputElement,
     apiTokenInput: root.querySelector("#api-token") as HTMLInputElement,
     tokenToggleBtn: root.querySelector("#token-toggle") as HTMLButtonElement,
+    openaiApiKeyInput: root.querySelector("#openai-api-key") as HTMLInputElement,
+    openaiKeyToggleBtn: root.querySelector("#openai-key-toggle") as HTMLButtonElement,
     saveBtn: root.querySelector("#save-settings-btn") as HTMLButtonElement,
     saveStatus: root.querySelector("#save-status") as HTMLElement,
     micBadge: root.querySelector("#mic-badge") as HTMLElement,
@@ -59,6 +75,21 @@ export function getSettingsFormElements(root: ParentNode): SettingsFormElements 
     meetingLlmProviderSelect: root.querySelector(
       "#meeting-llm-provider",
     ) as HTMLSelectElement,
+    meetingNotesEnabledInput: root.querySelector(
+      "#meeting-notes-enabled",
+    ) as HTMLInputElement,
+    meetingAskEnabledInput: root.querySelector(
+      "#meeting-ask-enabled",
+    ) as HTMLInputElement,
+    meetingLlmModelSelect: root.querySelector(
+      "#meeting-llm-model",
+    ) as HTMLSelectElement,
+    ollamaUrlInput: root.querySelector("#ollama-url") as HTMLInputElement,
+    ollamaFields: root.querySelector("#ollama-fields") as HTMLElement,
+    deleteAudioInput: root.querySelector(
+      "#delete-audio-after-transcription",
+    ) as HTMLInputElement,
+    maxUploadMbInput: root.querySelector("#max-upload-mb") as HTMLInputElement,
     captureModeHint: root.querySelector("#capture-mode-hint") as HTMLElement,
     dualTrackNote: root.querySelector("#dual-track-note") as HTMLElement,
   };
@@ -67,12 +98,26 @@ export function getSettingsFormElements(root: ParentNode): SettingsFormElements 
 export async function initSettingsForm(root: ParentNode): Promise<void> {
   const els = getSettingsFormElements(root);
   const settings = await getSettings();
+  const openaiApiKey = await getOpenAiApiKey();
 
   els.apiUrlInput.value = settings.apiUrl;
   els.apiTokenInput.value = settings.apiToken;
+  els.openaiApiKeyInput.value = openaiApiKey ?? "";
   populateTranscriptionModels(els, settings.transcriptionModel, settings.captureMode);
   populateCaptureModes(els, settings.captureMode);
   populateMeetingLlmProviders(els, settings.meetingLlmProvider);
+  const llmProvider = settings.meetingLlmProvider ?? DEFAULT_MEETING_LLM_PROVIDER;
+  const savedLlmModel =
+    settings.meetingLlmModel ??
+    (llmProvider === "ollama" ? settings.ollamaModel : undefined) ??
+    defaultMeetingLlmModelForProvider(llmProvider);
+  populateMeetingLlmModels(els, llmProvider, savedLlmModel);
+  els.meetingNotesEnabledInput.checked = settings.meetingNotesEnabled !== false;
+  els.meetingAskEnabledInput.checked = settings.meetingAskEnabled !== false;
+  els.ollamaUrlInput.value = settings.ollamaUrl ?? DEFAULT_OLLAMA_URL;
+  els.deleteAudioInput.checked = settings.deleteAudioAfterTranscription !== false;
+  els.maxUploadMbInput.value = String(settings.maxUploadMb ?? DEFAULT_MAX_UPLOAD_MB);
+  updateOllamaFieldsVisibility(els);
   updateCaptureModeUi(els, settings.transcriptionModel);
 
   els.tokenToggleBtn.addEventListener("click", () => {
@@ -80,6 +125,13 @@ export async function initSettingsForm(root: ParentNode): Promise<void> {
     els.apiTokenInput.type = showing ? "password" : "text";
     els.tokenToggleBtn.textContent = showing ? "Show" : "Hide";
     els.tokenToggleBtn.setAttribute("aria-pressed", showing ? "false" : "true");
+  });
+
+  els.openaiKeyToggleBtn.addEventListener("click", () => {
+    const showing = els.openaiApiKeyInput.type === "text";
+    els.openaiApiKeyInput.type = showing ? "password" : "text";
+    els.openaiKeyToggleBtn.textContent = showing ? "Show" : "Hide";
+    els.openaiKeyToggleBtn.setAttribute("aria-pressed", showing ? "false" : "true");
   });
 
   els.saveBtn.addEventListener("click", () => void saveApiSettings(els));
@@ -90,7 +142,28 @@ export async function initSettingsForm(root: ParentNode): Promise<void> {
     void saveTranscriptionModel(els),
   );
   els.captureModeSelect.addEventListener("change", () => void saveCaptureMode(els));
-  els.meetingLlmProviderSelect.addEventListener("change", () => void saveMeetingLlmProvider(els));
+  els.meetingLlmProviderSelect.addEventListener("change", () => {
+    const provider = els.meetingLlmProviderSelect.value as MeetingLlmProvider;
+    populateMeetingLlmModels(
+      els,
+      provider,
+      defaultMeetingLlmModelForProvider(provider),
+    );
+    updateOllamaFieldsVisibility(els);
+    void saveMeetingAiSettings(els);
+  });
+  els.meetingNotesEnabledInput.addEventListener("change", () =>
+    void saveMeetingAiSettings(els),
+  );
+  els.meetingAskEnabledInput.addEventListener("change", () =>
+    void saveMeetingAiSettings(els),
+  );
+  els.meetingLlmModelSelect.addEventListener("change", () =>
+    void saveMeetingAiSettings(els),
+  );
+  els.ollamaUrlInput.addEventListener("change", () => void saveMeetingAiSettings(els));
+  els.deleteAudioInput.addEventListener("change", () => void saveMeetingAiSettings(els));
+  els.maxUploadMbInput.addEventListener("change", () => void saveMeetingAiSettings(els));
 
   const hasMic = await refreshMicPermission(els);
   if (hasMic) {
@@ -312,6 +385,27 @@ function populateMeetingLlmProviders(
   els.meetingLlmProviderSelect.value = selected ?? DEFAULT_MEETING_LLM_PROVIDER;
 }
 
+function populateMeetingLlmModels(
+  els: SettingsFormElements,
+  provider: MeetingLlmProvider,
+  selected?: string,
+): void {
+  const presets = meetingLlmModelsForProvider(provider);
+  const effective =
+    selected?.trim() || defaultMeetingLlmModelForProvider(provider);
+  const known = new Set<string>(presets);
+  const models = known.has(effective) ? [...presets] : [...presets, effective];
+
+  els.meetingLlmModelSelect.innerHTML = "";
+  for (const model of models) {
+    const option = document.createElement("option");
+    option.value = model;
+    option.textContent = meetingLlmModelLabel(model);
+    els.meetingLlmModelSelect.appendChild(option);
+  }
+  els.meetingLlmModelSelect.value = effective;
+}
+
 function updateCaptureModeUi(
   els: SettingsFormElements,
   savedTranscriptionModel?: TranscriptionModel,
@@ -352,14 +446,34 @@ async function saveTranscriptionModel(els: SettingsFormElements): Promise<void> 
   setSaveStatus(els, "Transcription model saved.", false);
 }
 
-async function saveMeetingLlmProvider(els: SettingsFormElements): Promise<void> {
+function updateOllamaFieldsVisibility(els: SettingsFormElements): void {
+  const ollama = els.meetingLlmProviderSelect.value === "ollama";
+  els.ollamaFields.classList.toggle("hidden", !ollama);
+}
+
+async function saveMeetingAiSettings(els: SettingsFormElements): Promise<void> {
   const settings = await getSettings();
+  const maxUploadMb = Number.parseInt(els.maxUploadMbInput.value, 10);
   const provider = els.meetingLlmProviderSelect.value as MeetingLlmProvider;
+  const meetingLlmModel =
+    els.meetingLlmModelSelect.value || defaultMeetingLlmModelForProvider(provider);
   await saveSettings({
     ...settings,
     meetingLlmProvider: provider,
+    meetingNotesEnabled: els.meetingNotesEnabledInput.checked,
+    meetingAskEnabled: els.meetingAskEnabledInput.checked,
+    meetingLlmModel,
+    ollamaUrl: els.ollamaUrlInput.value.trim() || DEFAULT_OLLAMA_URL,
+    ollamaModel: provider === "ollama" ? meetingLlmModel : settings.ollamaModel,
+    deleteAudioAfterTranscription: els.deleteAudioInput.checked,
+    maxUploadMb: Number.isFinite(maxUploadMb) ? maxUploadMb : DEFAULT_MAX_UPLOAD_MB,
   });
-  setSaveStatus(els, "AI provider saved.", false);
+  updateOllamaFieldsVisibility(els);
+  setSaveStatus(els, "AI & storage settings saved.", false);
+}
+
+async function saveMeetingLlmProvider(els: SettingsFormElements): Promise<void> {
+  await saveMeetingAiSettings(els);
 }
 
 async function saveApiSettings(els: SettingsFormElements): Promise<void> {
@@ -371,18 +485,30 @@ async function saveApiSettings(els: SettingsFormElements): Promise<void> {
       ? settings.transcriptionModel
       : ((els.transcriptionModelSelect.value as TranscriptionModel) ||
           settings.transcriptionModel);
+  const maxUploadMb = Number.parseInt(els.maxUploadMbInput.value, 10);
+  const provider =
+    (els.meetingLlmProviderSelect.value as MeetingLlmProvider) ??
+    settings.meetingLlmProvider;
+  const meetingLlmModel =
+    els.meetingLlmModelSelect.value || defaultMeetingLlmModelForProvider(provider);
   await saveSettings({
     apiUrl: els.apiUrlInput.value.replace(/\/$/, ""),
     apiToken: els.apiTokenInput.value,
     transcriptionModel,
     captureMode,
-    meetingLlmProvider:
-      (els.meetingLlmProviderSelect.value as MeetingLlmProvider) ??
-      settings.meetingLlmProvider,
+    meetingLlmProvider: provider,
+    meetingNotesEnabled: els.meetingNotesEnabledInput.checked,
+    meetingAskEnabled: els.meetingAskEnabledInput.checked,
+    meetingLlmModel,
+    ollamaUrl: els.ollamaUrlInput.value.trim() || DEFAULT_OLLAMA_URL,
+    ollamaModel: provider === "ollama" ? meetingLlmModel : settings.ollamaModel,
+    deleteAudioAfterTranscription: els.deleteAudioInput.checked,
+    maxUploadMb: Number.isFinite(maxUploadMb) ? maxUploadMb : DEFAULT_MAX_UPLOAD_MB,
     microphoneDeviceId: els.micDeviceSelect.disabled
       ? settings.microphoneDeviceId
       : els.micDeviceSelect.value || undefined,
   });
+  await saveOpenAiApiKey(els.openaiApiKeyInput.value);
   setSaveStatus(els, "Connection settings saved.", false);
 }
 

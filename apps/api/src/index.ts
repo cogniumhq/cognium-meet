@@ -1,78 +1,46 @@
 import "dotenv/config";
 import { serve } from "@hono/node-server";
 import { join } from "node:path";
-import {
-  DEFAULT_TRANSCRIPTION_MODEL,
-  parseMeetingLlmProvider,
-  parseTranscriptionModel,
-} from "@cognium/meet-shared";
+import { DEFAULT_TRANSCRIPTION_MODEL } from "@cognium/meet-shared";
 import { createApp } from "./app.js";
 import { resumePendingRecordings } from "./transcription/process-recording.js";
+import { resumePendingMeetingNotes } from "./notes/process-notes.js";
 import { createTranscriptionProviderFactory } from "./transcription/create-provider.js";
 import { UserStoreRegistry } from "./storage/user-store-registry.js";
-import { normalizeOllamaUrl, type MeetingLlmConfig } from "./llm/create-meeting-llm.js";
 
 const port = Number.parseInt(process.env.PORT ?? "3847", 10);
 const storageDir = process.env.STORAGE_DIR ?? join(process.cwd(), "../../storage");
 const apiToken = process.env.API_TOKEN;
-const openaiKey = process.env.OPENAI_API_KEY;
+const openaiKey = process.env.OPENAI_API_KEY?.trim() || undefined;
 
 if (!openaiKey) {
-  console.error("OPENAI_API_KEY is required");
-  process.exit(1);
+  console.warn(
+    "OPENAI_API_KEY is not set — transcription and OpenAI notes/Ask require clients to send X-OpenAI-Key.",
+  );
 }
 
 const userRegistry = new UserStoreRegistry(storageDir);
-
-const defaultTranscriptionModel = parseTranscriptionModel(
-  process.env.TRANSCRIPTION_MODEL,
-  DEFAULT_TRANSCRIPTION_MODEL,
-);
 const getTranscriptionProvider = createTranscriptionProviderFactory(openaiKey);
-const deleteAudioAfterTranscription =
-  process.env.DELETE_AUDIO_AFTER_TRANSCRIPTION !== "false";
-
-const notesEnabled = process.env.MEETING_NOTES_ENABLED !== "false";
-const notesModel = process.env.MEETING_NOTES_MODEL?.trim() || "gpt-4o-mini";
-const askEnabled = process.env.MEETING_ASK_ENABLED !== "false";
-const askModel = process.env.MEETING_ASK_MODEL?.trim() || notesModel;
-const llmConfig: MeetingLlmConfig = {
-  provider: parseMeetingLlmProvider(process.env.MEETING_LLM_PROVIDER?.trim().toLowerCase()),
-  openaiApiKey: openaiKey,
-  ollamaUrl: normalizeOllamaUrl(process.env.OLLAMA_URL?.trim() || "http://localhost:11434"),
-  ollamaModel: process.env.MEETING_OLLAMA_MODEL?.trim() || "qwen2.5:7b",
-};
-
-const maxUploadBytes = Number.parseInt(
-  process.env.MAX_UPLOAD_BYTES ?? String(150 * 1024 * 1024),
-  10,
-);
 
 const deps = {
   userRegistry,
   getTranscriptionProvider,
-  defaultTranscriptionModel,
-  deleteAudioAfterTranscription,
-  llmConfig,
-  notesModel,
-  notesEnabled,
-  askEnabled,
-  askModel,
+  defaultTranscriptionModel: DEFAULT_TRANSCRIPTION_MODEL,
+  openaiApiKey: openaiKey,
   apiToken,
-  maxUploadBytes,
 };
 
 const app = createApp(deps);
 
 void resumePendingRecordings(deps);
+void resumePendingMeetingNotes(deps);
 
 serve({ fetch: app.fetch, port }, () => {
   console.log(`cognium-meet API listening on http://localhost:${port}`);
-  console.log(`Default transcription model: ${defaultTranscriptionModel}`);
+  console.log(`Default transcription model: ${DEFAULT_TRANSCRIPTION_MODEL}`);
   console.log(
-    `Meeting LLM provider: ${llmConfig.provider}${llmConfig.provider === "ollama" ? ` (${llmConfig.ollamaUrl}, model=${llmConfig.ollamaModel})` : ""}`,
+    `OpenAI key: ${openaiKey ? "server fallback configured" : "extension BYOK only"}`,
   );
-  console.log(`Meeting notes: ${notesEnabled ? `enabled (${notesModel})` : "disabled"}`);
-  console.log(`Meeting Q&A: ${askEnabled ? `enabled (${askModel})` : "disabled"}`);
+  console.log("Meeting AI, upload limits, and storage options come from extension Settings.");
   console.log("Per-user storage: storage/users/<chrome-profile-uuid>/");
 });

@@ -34,31 +34,17 @@ cp apps/api/.env.example apps/api/.env
 Edit `apps/api/.env`:
 
 ```env
+# Optional server fallback — users can also set their own key in extension Settings
 OPENAI_API_KEY=sk-...
 PORT=3847
 API_TOKEN=dev-token-change-me
-DELETE_AUDIO_AFTER_TRANSCRIPTION=true
-# TRANSCRIPTION_MODEL=gpt-4o-transcribe-diarize  # default
-# TRANSCRIPTION_MODEL=whisper-1                    # legacy, no speaker labels
-# Notes + Ask LLM provider (Phase A)
-# MEETING_LLM_PROVIDER=openai
-# OLLAMA_URL=http://localhost:11434
-# MEETING_OLLAMA_MODEL=qwen2.5:7b
-# MEETING_NOTES_MODEL=qwen2.5:7b
-# MEETING_ASK_MODEL=qwen2.5:7b
 ```
 
-To run notes + Ask with Ollama:
+`OPENAI_API_KEY` on the server is **optional**. If unset, each user must add their **OpenAI API key** in extension Settings (stored locally, sent as `X-OpenAI-Key`). Priority per request: extension key → stored recording key → server fallback.
 
-```env
-MEETING_LLM_PROVIDER=ollama
-OLLAMA_URL=http://localhost:11434
-MEETING_OLLAMA_MODEL=qwen2.5:7b
-MEETING_NOTES_MODEL=qwen2.5:7b
-MEETING_ASK_MODEL=qwen2.5:7b
-```
+Transcription model, meeting notes, Ask, Ollama, upload limits, and delete-audio behavior are configured in the **extension Settings** (sent with each upload and Ask request), not in `.env`.
 
-`OLLAMA_URL` can be `http://localhost:11434`; the API appends `/v1` automatically for OpenAI-compatible calls.
+To run notes + Ask with Ollama, open extension Settings and set **Meeting AI provider** to Ollama, then set **Ollama URL** (e.g. `http://localhost:11434`) and **Ollama model** (e.g. `qwen2.5:7b`). The API appends `/v1` automatically for OpenAI-compatible calls. Ollama must be reachable from the machine running the API.
 
 Start the API (loads `apps/api/.env` automatically):
 
@@ -87,6 +73,8 @@ Optional hot-reload: `pnpm --filter @cognium/meet-extension dev:watch`
 5. Open extension **Settings** and set:
    - API URL: `http://localhost:3847`
    - API Token: same value as `API_TOKEN` in `.env`
+   - **OpenAI API key** (unless the server has `OPENAI_API_KEY` set)
+   - Transcription model, meeting AI provider, notes/Ask options, upload limit, etc.
    - Click **Grant microphone access** (see below)
 
 ### Microphone capture

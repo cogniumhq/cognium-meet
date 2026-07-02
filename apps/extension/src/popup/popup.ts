@@ -29,7 +29,9 @@ import {
   type StoredRecording,
 } from "../lib/storage.js";
 import { isRecordableTabUrl } from "../lib/recordable-tab.js";
+import { isMeetingAskEnabled } from "../lib/client-config.js";
 import { initSettingsForm } from "../lib/settings-form.js";
+import { getSettings } from "../lib/storage.js";
 
 const startBtn = document.getElementById("start-btn") as HTMLButtonElement;
 const stopOnlyBtn = document.getElementById("stop-only-btn") as HTMLButtonElement;
@@ -38,6 +40,7 @@ const statusText = document.getElementById("status-text") as HTMLParagraphElemen
 const recordingIndicator = document.getElementById("recording-indicator") as HTMLDivElement;
 const timerEl = document.getElementById("timer") as HTMLSpanElement;
 const historyList = document.getElementById("history-list") as HTMLUListElement;
+const meetingAskWrap = document.getElementById("meeting-ask-wrap") as HTMLDivElement;
 const meetingAsk = document.getElementById("meeting-ask") as HTMLTextAreaElement;
 const meetingAskLabel = document.getElementById("meeting-ask-label") as HTMLLabelElement;
 const meetingAskBtn = document.getElementById("meeting-ask-btn") as HTMLButtonElement;
@@ -121,6 +124,7 @@ async function init(): Promise<void> {
     void persistAskChat();
   });
   await initSettingsForm(document.getElementById("settings-root")!);
+  await applyMeetingAskVisibility();
   await restoreAskChat();
 
   startBtn.addEventListener("click", () => void startRecording());
@@ -362,6 +366,12 @@ function showMainView(): void {
   settingsView.classList.add("hidden");
   transcriptView.classList.add("hidden");
   currentTranscript = undefined;
+  void applyMeetingAskVisibility();
+}
+
+async function applyMeetingAskVisibility(): Promise<void> {
+  const settings = await getSettings();
+  meetingAskWrap.classList.toggle("hidden", !isMeetingAskEnabled(settings));
 }
 
 function setAskScope(item?: StoredRecording): void {
