@@ -32,9 +32,6 @@ const deps = {
 
 const app = createApp(deps);
 
-void resumePendingRecordings(deps);
-void resumePendingMeetingNotes(deps);
-
 serve({ fetch: app.fetch, port }, () => {
   console.log(`cognium-meet API listening on http://localhost:${port}`);
   console.log(`Default transcription model: ${DEFAULT_TRANSCRIPTION_MODEL}`);
@@ -44,3 +41,14 @@ serve({ fetch: app.fetch, port }, () => {
   console.log("Meeting AI, upload limits, and storage options come from extension Settings.");
   console.log("Per-user storage: storage/users/<chrome-profile-uuid>/");
 });
+
+void (async () => {
+  const warmed = await userRegistry.warmAll();
+  if (warmed.users > 0) {
+    console.log(
+      `[search] indexed ${warmed.recordings} completed recording(s) across ${warmed.users} user(s)`,
+    );
+  }
+  await resumePendingRecordings(deps);
+  await resumePendingMeetingNotes(deps);
+})();
