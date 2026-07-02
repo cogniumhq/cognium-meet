@@ -9,10 +9,14 @@ import { getSettings, saveSettings } from "./storage.js";
 import {
   AUDIO_CAPTURE_MODES,
   audioCaptureModeLabel,
+  DEFAULT_MEETING_LLM_PROVIDER,
   DEFAULT_TRANSCRIPTION_MODEL,
+  MEETING_LLM_PROVIDERS,
+  meetingLlmProviderLabel,
   TRANSCRIPTION_MODELS,
   transcriptionModelLabel,
   type AudioCaptureMode,
+  type MeetingLlmProvider,
   type TranscriptionModel,
 } from "@cognium/meet-shared";
 
@@ -30,6 +34,7 @@ export interface SettingsFormElements {
   micBlockedHint: HTMLElement;
   transcriptionModelSelect: HTMLSelectElement;
   captureModeSelect: HTMLSelectElement;
+  meetingLlmProviderSelect: HTMLSelectElement;
   captureModeHint: HTMLElement;
   dualTrackNote: HTMLElement;
 }
@@ -51,6 +56,9 @@ export function getSettingsFormElements(root: ParentNode): SettingsFormElements 
       "#transcription-model",
     ) as HTMLSelectElement,
     captureModeSelect: root.querySelector("#capture-mode") as HTMLSelectElement,
+    meetingLlmProviderSelect: root.querySelector(
+      "#meeting-llm-provider",
+    ) as HTMLSelectElement,
     captureModeHint: root.querySelector("#capture-mode-hint") as HTMLElement,
     dualTrackNote: root.querySelector("#dual-track-note") as HTMLElement,
   };
@@ -64,6 +72,7 @@ export async function initSettingsForm(root: ParentNode): Promise<void> {
   els.apiTokenInput.value = settings.apiToken;
   populateTranscriptionModels(els, settings.transcriptionModel, settings.captureMode);
   populateCaptureModes(els, settings.captureMode);
+  populateMeetingLlmProviders(els, settings.meetingLlmProvider);
   updateCaptureModeUi(els, settings.transcriptionModel);
 
   els.tokenToggleBtn.addEventListener("click", () => {
@@ -81,6 +90,7 @@ export async function initSettingsForm(root: ParentNode): Promise<void> {
     void saveTranscriptionModel(els),
   );
   els.captureModeSelect.addEventListener("change", () => void saveCaptureMode(els));
+  els.meetingLlmProviderSelect.addEventListener("change", () => void saveMeetingLlmProvider(els));
 
   const hasMic = await refreshMicPermission(els);
   if (hasMic) {
@@ -288,6 +298,20 @@ function populateCaptureModes(
   els.captureModeSelect.value = selected ?? "mixed";
 }
 
+function populateMeetingLlmProviders(
+  els: SettingsFormElements,
+  selected?: MeetingLlmProvider,
+): void {
+  els.meetingLlmProviderSelect.innerHTML = "";
+  for (const provider of MEETING_LLM_PROVIDERS) {
+    const option = document.createElement("option");
+    option.value = provider;
+    option.textContent = meetingLlmProviderLabel(provider);
+    els.meetingLlmProviderSelect.appendChild(option);
+  }
+  els.meetingLlmProviderSelect.value = selected ?? DEFAULT_MEETING_LLM_PROVIDER;
+}
+
 function updateCaptureModeUi(
   els: SettingsFormElements,
   savedTranscriptionModel?: TranscriptionModel,
@@ -328,6 +352,16 @@ async function saveTranscriptionModel(els: SettingsFormElements): Promise<void> 
   setSaveStatus(els, "Transcription model saved.", false);
 }
 
+async function saveMeetingLlmProvider(els: SettingsFormElements): Promise<void> {
+  const settings = await getSettings();
+  const provider = els.meetingLlmProviderSelect.value as MeetingLlmProvider;
+  await saveSettings({
+    ...settings,
+    meetingLlmProvider: provider,
+  });
+  setSaveStatus(els, "AI provider saved.", false);
+}
+
 async function saveApiSettings(els: SettingsFormElements): Promise<void> {
   const settings = await getSettings();
   const captureMode =
@@ -342,6 +376,9 @@ async function saveApiSettings(els: SettingsFormElements): Promise<void> {
     apiToken: els.apiTokenInput.value,
     transcriptionModel,
     captureMode,
+    meetingLlmProvider:
+      (els.meetingLlmProviderSelect.value as MeetingLlmProvider) ??
+      settings.meetingLlmProvider,
     microphoneDeviceId: els.micDeviceSelect.disabled
       ? settings.microphoneDeviceId
       : els.micDeviceSelect.value || undefined,

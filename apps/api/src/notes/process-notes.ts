@@ -1,11 +1,13 @@
 import type { RecordingMeta } from "@cognium/meet-shared";
+import type { MeetingLlmConfig } from "../llm/create-meeting-llm.js";
+import { resolveMeetingLlmModel } from "../llm/create-meeting-llm.js";
 import type { RecordingStore } from "../storage/recording-store.js";
 import type { UserStoreRegistry } from "../storage/user-store-registry.js";
 import { generateMeetingNotes } from "./generate-meeting-notes.js";
 
 export interface NotesProcessingDeps {
   userRegistry: UserStoreRegistry;
-  openaiApiKey: string;
+  llmConfig: MeetingLlmConfig;
   notesModel: string;
   notesEnabled: boolean;
 }
@@ -59,12 +61,17 @@ async function processMeetingNotes(
     notesError: undefined,
   });
 
-  console.log(`[notes] started user=${userId} id=${id} model=${deps.notesModel}`);
+  const llmProvider = meta.meetingLlmProvider ?? deps.llmConfig.provider;
+  const notesModel = resolveMeetingLlmModel(deps.llmConfig, deps.notesModel, llmProvider);
+  console.log(
+    `[notes] started user=${userId} id=${id} provider=${llmProvider} model=${notesModel}`,
+  );
 
   try {
     const notes = await generateMeetingNotes({
-      apiKey: deps.openaiApiKey,
-      model: deps.notesModel,
+      llmConfig: deps.llmConfig,
+      llmProvider: meta.meetingLlmProvider,
+      model: notesModel,
       recordingId: id,
       meetingTitle: meta.meetingTitle,
       transcript,
@@ -85,7 +92,7 @@ async function processMeetingNotes(
     });
 
     console.log(
-      `[notes] completed user=${userId} id=${id} actions=${notes.actionItems.length} decisions=${notes.decisions.length}`,
+      `[notes] completed user=${userId} id=${id} provider=${llmProvider} actions=${notes.actionItems.length} decisions=${notes.decisions.length}`,
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

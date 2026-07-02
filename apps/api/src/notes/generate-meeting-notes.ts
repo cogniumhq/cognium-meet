@@ -1,6 +1,12 @@
-import { ai, ax } from "@ax-llm/ax";
-import type { MeetingNotes, TranscriptResult } from "@cognium/meet-shared";
+import { ax } from "@ax-llm/ax";
+import type {
+  MeetingLlmProvider,
+  MeetingNotes,
+  TranscriptResult,
+} from "@cognium/meet-shared";
 import { segmentsToPlainText } from "@cognium/meet-shared";
+import type { MeetingLlmConfig } from "../llm/create-meeting-llm.js";
+import { createMeetingLlm, resolveMeetingLlmModel } from "../llm/create-meeting-llm.js";
 
 const MAX_TRANSCRIPT_CHARS = 90_000;
 
@@ -13,13 +19,15 @@ const meetingNotesGen = ax(
 );
 
 export async function generateMeetingNotes(opts: {
-  apiKey: string;
+  llmConfig: MeetingLlmConfig;
+  llmProvider?: MeetingLlmProvider;
   model: string;
   recordingId: string;
   meetingTitle?: string;
   transcript: TranscriptResult;
 }): Promise<MeetingNotes> {
-  const llm = ai({ name: "openai", apiKey: opts.apiKey });
+  const llm = createMeetingLlm(opts.llmConfig, opts.llmProvider);
+  const model = resolveMeetingLlmModel(opts.llmConfig, opts.model, opts.llmProvider);
 
   let text = segmentsToPlainText(opts.transcript.segments);
   if (text.length > MAX_TRANSCRIPT_CHARS) {
@@ -34,7 +42,7 @@ export async function generateMeetingNotes(opts: {
       meetingTitle: opts.meetingTitle?.trim() || "Meeting",
       transcript: text,
     },
-    { model: opts.model },
+    { model },
   );
 
   return {

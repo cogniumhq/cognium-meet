@@ -3,7 +3,11 @@ import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
 import { v4 as uuidv4 } from "uuid";
 import { COGNIUM_USER_ID_HEADER, type RecordingMeta } from "@cognium/meet-shared";
-import { parseAudioCaptureMode, parseTranscriptionModel } from "@cognium/meet-shared";
+import {
+  parseAudioCaptureMode,
+  parseMeetingLlmProvider,
+  parseTranscriptionModel,
+} from "@cognium/meet-shared";
 import type { RecordingStore } from "./storage/recording-store.js";
 import type { SearchIndex } from "./storage/search-index.js";
 import { isLikelyAudio } from "./transcription/prepare-audio.js";
@@ -23,6 +27,8 @@ import {
 } from "./ask/parse-ask-request.js";
 import { parseUserIdHeader } from "./storage/user-id.js";
 import type { UserStoreRegistry } from "./storage/user-store-registry.js";
+import type { MeetingLlmConfig } from "./llm/create-meeting-llm.js";
+import { resolveMeetingLlmModel } from "./llm/create-meeting-llm.js";
 
 type AppVariables = {
   userId: string;
@@ -32,6 +38,7 @@ type AppVariables = {
 
 interface AppDeps extends ProcessingDeps {
   userRegistry: UserStoreRegistry;
+  llmConfig: MeetingLlmConfig;
   apiToken?: string;
   maxUploadBytes?: number;
   defaultCaptureMode?: import("@cognium/meet-shared").AudioCaptureMode;
@@ -91,7 +98,12 @@ export function createApp(deps: AppDeps) {
     const store = c.get("store");
     const searchIndex = c.get("searchIndex");
 
-    let body: { question?: string; recordingId?: string; messages?: unknown };
+    let body: {
+      question?: string;
+      recordingId?: string;
+      messages?: unknown;
+      llmProvider?: unknown;
+    };
     try {
       body = await c.req.json();
     } catch {
@@ -107,6 +119,7 @@ export function createApp(deps: AppDeps) {
       typeof body.recordingId === "string" && body.recordingId.trim()
         ? body.recordingId.trim()
         : undefined;
+    const llmProvider = parseMeetingLlmProvider(body.llmProvider, deps.llmConfig.provider);
 
     if (recordingId) {
       const meta = await store.getMeta(recordingId);
@@ -129,16 +142,18 @@ export function createApp(deps: AppDeps) {
     });
 
     const result = await answerMeetingQuestion({
-      apiKey: deps.openaiApiKey,
+      llmConfig: deps.llmConfig,
+      llmProvider,
       model: deps.askModel,
       messages,
       context,
       citations,
     });
 
+    const askModel = resolveMeetingLlmModel(deps.llmConfig, deps.askModel, llmProvider);
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     console.log(
-      `[ask] turns=${messages.length} question=${JSON.stringify((lastUser?.content ?? "").slice(0, 80))} meetings=${meetingCount} insufficient=${result.insufficientContext}`,
+      `[ask] provider=${llmProvider} model=${askModel} turns=${messages.length} question=${JSON.stringify((lastUser?.content ?? "").slice(0, 80))} meetings=${meetingCount} insufficient=${result.insufficientContext}`,
     );
 
     return c.json({
@@ -175,6 +190,7 @@ export function createApp(deps: AppDeps) {
       let durationMs: number | undefined;
       let transcriptionModel = deps.defaultTranscriptionModel;
       let captureMode = deps.defaultCaptureMode ?? "mixed";
+      let meetingLlmProvider = deps.llmConfig.provider;
 
       if (contentType.includes("multipart/form-data")) {
         const form = await c.req.parseBody();
@@ -203,6 +219,10 @@ export function createApp(deps: AppDeps) {
           form.captureMode,
           deps.defaultCaptureMode ?? "mixed",
         );
+        meetingLlmProvider = parseMeetingLlmProvider(
+          form.meetingLlmProvider,
+          deps.llmConfig.provider,
+        );
 
         buffer = Buffer.from(await audio.arrayBuffer());
 
@@ -220,6 +240,7 @@ export function createApp(deps: AppDeps) {
           durationMs?: number;
           transcriptionModel?: string;
           captureMode?: string;
+          meetingLlmProvider?: string;
         };
         try {
           body = await c.req.json();
@@ -245,6 +266,10 @@ export function createApp(deps: AppDeps) {
         captureMode = parseAudioCaptureMode(
           body.captureMode,
           deps.defaultCaptureMode ?? "mixed",
+        );
+        meetingLlmProvider = parseMeetingLlmProvider(
+          body.meetingLlmProvider,
+          deps.llmConfig.provider,
         );
       }
 
@@ -272,6 +297,7 @@ export function createApp(deps: AppDeps) {
         status: "processing",
         transcriptionModel,
         captureMode,
+        meetingLlmProvider,
         processingStartedAt: new Date().toISOString(),
       };
       await store.saveMeta(meta);
@@ -310,14 +336,22 @@ export function createApp(deps: AppDeps) {
     }
 
     let retryModel = meta.transcriptionModel ?? deps.defaultTranscriptionModel;
+    let retryLlmProvider = meta.meetingLlmProvider ?? deps.llmConfig.provider;
     try {
-      const body = await c.req.json<{ transcriptionModel?: string }>();
+      const body = await c.req.json<{
+        transcriptionModel?: string;
+        meetingLlmProvider?: string;
+      }>();
       if (body.transcriptionModel) {
         retryModel = parseTranscriptionModel(
           body.transcriptionModel,
           deps.defaultTranscriptionModel,
         );
       }
+      retryLlmProvider = parseMeetingLlmProvider(
+        body.meetingLlmProvider,
+        retryLlmProvider,
+      );
     } catch {
       // empty body is fine — use stored model
     }
@@ -327,6 +361,7 @@ export function createApp(deps: AppDeps) {
       status: "processing",
       error: undefined,
       transcriptionModel: retryModel,
+      meetingLlmProvider: retryLlmProvider,
       processingStartedAt: new Date().toISOString(),
       notesStatus: deps.notesEnabled ? "pending" : "skipped",
       notesError: undefined,
@@ -470,8 +505,16 @@ export function createApp(deps: AppDeps) {
     if (!deps.notesEnabled) {
       return c.json({ error: "Meeting notes are disabled on this server" }, 503);
     }
+    let llmProvider = meta.meetingLlmProvider ?? deps.llmConfig.provider;
+    try {
+      const body = await c.req.json<{ llmProvider?: string }>();
+      llmProvider = parseMeetingLlmProvider(body.llmProvider, llmProvider);
+    } catch {
+      // empty body is fine
+    }
     await store.saveMeta({
       ...meta,
+      meetingLlmProvider: llmProvider,
       notesStatus: "pending",
       notesError: undefined,
     });

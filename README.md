@@ -40,7 +40,25 @@ API_TOKEN=dev-token-change-me
 DELETE_AUDIO_AFTER_TRANSCRIPTION=true
 # TRANSCRIPTION_MODEL=gpt-4o-transcribe-diarize  # default
 # TRANSCRIPTION_MODEL=whisper-1                    # legacy, no speaker labels
+# Notes + Ask LLM provider (Phase A)
+# MEETING_LLM_PROVIDER=openai
+# OLLAMA_URL=http://localhost:11434
+# MEETING_OLLAMA_MODEL=qwen2.5:7b
+# MEETING_NOTES_MODEL=qwen2.5:7b
+# MEETING_ASK_MODEL=qwen2.5:7b
 ```
+
+To run notes + Ask with Ollama:
+
+```env
+MEETING_LLM_PROVIDER=ollama
+OLLAMA_URL=http://localhost:11434
+MEETING_OLLAMA_MODEL=qwen2.5:7b
+MEETING_NOTES_MODEL=qwen2.5:7b
+MEETING_ASK_MODEL=qwen2.5:7b
+```
+
+`OLLAMA_URL` can be `http://localhost:11434`; the API appends `/v1` automatically for OpenAI-compatible calls.
 
 Start the API (loads `apps/api/.env` automatically):
 

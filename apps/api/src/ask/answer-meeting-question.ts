@@ -1,6 +1,12 @@
-import { ai, ax } from "@ax-llm/ax";
-import type { MeetingAskCitation, MeetingAskMessage } from "@cognium/meet-shared";
+import { ax } from "@ax-llm/ax";
+import type {
+  MeetingAskCitation,
+  MeetingAskMessage,
+  MeetingLlmProvider,
+} from "@cognium/meet-shared";
 import { formatMeetingAskConversation } from "@cognium/meet-shared";
+import type { MeetingLlmConfig } from "../llm/create-meeting-llm.js";
+import { createMeetingLlm, resolveMeetingLlmModel } from "../llm/create-meeting-llm.js";
 
 const meetingAskGen = ax(
   `conversation:string, context:string -> answer:string, insufficientContext:boolean`,
@@ -11,7 +17,8 @@ const meetingAskGen = ax(
 );
 
 export async function answerMeetingQuestion(opts: {
-  apiKey: string;
+  llmConfig: MeetingLlmConfig;
+  llmProvider?: MeetingLlmProvider;
   model: string;
   messages: MeetingAskMessage[];
   context: string;
@@ -30,7 +37,8 @@ export async function answerMeetingQuestion(opts: {
     };
   }
 
-  const llm = ai({ name: "openai", apiKey: opts.apiKey });
+  const llm = createMeetingLlm(opts.llmConfig, opts.llmProvider);
+  const model = resolveMeetingLlmModel(opts.llmConfig, opts.model, opts.llmProvider);
 
   const result = await meetingAskGen.forward(
     llm,
@@ -38,7 +46,7 @@ export async function answerMeetingQuestion(opts: {
       conversation: formatMeetingAskConversation(opts.messages),
       context: opts.context,
     },
-    { model: opts.model },
+    { model },
   );
 
   return {

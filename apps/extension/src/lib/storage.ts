@@ -2,6 +2,7 @@ import type { ExtensionSettings, MeetingAskMessage, NotesStatus, TranscriptionPr
 import {
   DEFAULT_API_URL,
   DEFAULT_AUDIO_CAPTURE_MODE,
+  DEFAULT_MEETING_LLM_PROVIDER,
   DEFAULT_TRANSCRIPTION_MODEL,
   mergeTranscriptionProgress,
 } from "@cognium/meet-shared";
@@ -14,6 +15,7 @@ const DEFAULT_SETTINGS: ExtensionSettings = {
   apiToken: "dev-token-change-me",
   transcriptionModel: DEFAULT_TRANSCRIPTION_MODEL,
   captureMode: DEFAULT_AUDIO_CAPTURE_MODE,
+  meetingLlmProvider: DEFAULT_MEETING_LLM_PROVIDER,
 };
 
 export async function getSettings(): Promise<ExtensionSettings> {

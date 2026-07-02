@@ -74,6 +74,8 @@ export interface RecordingMeta {
   /** AI meeting notes generation state (after transcript is ready). */
   notesStatus?: NotesStatus;
   notesError?: string;
+  /** LLM provider used for Ask/notes (when set per recording). */
+  meetingLlmProvider?: MeetingLlmProvider;
 }
 
 export const TRANSCRIPTION_MODELS = [
@@ -139,6 +141,21 @@ export type MeetingAskCitation = {
 };
 
 export type MeetingAskRole = "user" | "assistant";
+export type MeetingLlmProvider = "openai" | "ollama";
+
+export const MEETING_LLM_PROVIDERS = ["openai", "ollama"] as const;
+export const DEFAULT_MEETING_LLM_PROVIDER: MeetingLlmProvider = "openai";
+
+export function parseMeetingLlmProvider(
+  value: unknown,
+  fallback: MeetingLlmProvider = DEFAULT_MEETING_LLM_PROVIDER,
+): MeetingLlmProvider {
+  return value === "openai" || value === "ollama" ? value : fallback;
+}
+
+export function meetingLlmProviderLabel(provider: MeetingLlmProvider): string {
+  return provider === "ollama" ? "Ollama (local)" : "OpenAI (cloud)";
+}
 
 export interface MeetingAskMessage {
   role: MeetingAskRole;
@@ -154,6 +171,8 @@ export interface MeetingAskRequest {
   question?: string;
   /** Full conversation including the latest user message */
   messages?: MeetingAskMessage[];
+  /** Optional provider override for this ask call */
+  llmProvider?: MeetingLlmProvider;
   /** Limit to one meeting; omit to search across all saved meetings. */
   recordingId?: string;
 }
@@ -202,6 +221,8 @@ export interface ExtensionSettings {
   transcriptionModel?: TranscriptionModel;
   /** Tab + mic capture strategy */
   captureMode?: AudioCaptureMode;
+  /** Provider for Ask + meeting notes */
+  meetingLlmProvider?: MeetingLlmProvider;
   /** Chrome media deviceId for audioinput; empty = Chrome default */
   microphoneDeviceId?: string;
 }

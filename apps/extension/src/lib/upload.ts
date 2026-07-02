@@ -1,6 +1,7 @@
 import type { MeetingAskRequest, MeetingAskResponse, RecordingMeta, TranscriptResult } from "@cognium/meet-shared";
 import {
   DEFAULT_AUDIO_CAPTURE_MODE,
+  DEFAULT_MEETING_LLM_PROVIDER,
   DEFAULT_TRANSCRIPTION_MODEL,
 } from "@cognium/meet-shared";
 import { buildApiHeaders, getApiUrl } from "./api-headers.js";
@@ -56,6 +57,10 @@ export async function uploadRecording(params: {
     "captureMode",
     settings.captureMode ?? DEFAULT_AUDIO_CAPTURE_MODE,
   );
+  form.append(
+    "meetingLlmProvider",
+    settings.meetingLlmProvider ?? DEFAULT_MEETING_LLM_PROVIDER,
+  );
 
   const response = await fetch(`${settings.apiUrl}/v1/recordings`, {
     method: "POST",
@@ -93,6 +98,7 @@ export async function retryRecording(id: string): Promise<RecordingMeta> {
     body: JSON.stringify({
       transcriptionModel: settings.transcriptionModel ?? DEFAULT_TRANSCRIPTION_MODEL,
       captureMode: settings.captureMode ?? DEFAULT_AUDIO_CAPTURE_MODE,
+      meetingLlmProvider: settings.meetingLlmProvider ?? DEFAULT_MEETING_LLM_PROVIDER,
     }),
   });
   if (!response.ok) {
@@ -199,9 +205,13 @@ function normalizeAskRequest(request: MeetingAskRequest): MeetingAskRequest {
 export async function askMeetings(
   request: MeetingAskRequest,
 ): Promise<MeetingAskResponse> {
+  const settings = await getSettings();
   const apiUrl = await getApiUrl();
   const headers = await buildApiHeaders({ "Content-Type": "application/json" });
-  const payload = normalizeAskRequest(request);
+  const payload = normalizeAskRequest({
+    ...request,
+    llmProvider: settings.meetingLlmProvider ?? DEFAULT_MEETING_LLM_PROVIDER,
+  });
 
   const response = await fetch(`${apiUrl}/v1/ask`, {
     method: "POST",
