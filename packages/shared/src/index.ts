@@ -267,6 +267,30 @@ export function parseMeetingLlmProvider(
   return value === "openai" || value === "ollama" ? value : fallback;
 }
 
+export function looksLikeOpenAiMeetingModel(model: string): boolean {
+  const name = model.trim().toLowerCase();
+  return name.startsWith("gpt-") || name.startsWith("o1") || name.startsWith("o3");
+}
+
+/** Pick a model tag that matches the selected provider (avoids Ollama tags on OpenAI, etc.). */
+export function coerceMeetingLlmModelForProvider(
+  provider: MeetingLlmProvider,
+  model: string | undefined,
+): string {
+  const trimmed = model?.trim();
+  if (!trimmed) {
+    return defaultMeetingLlmModelForProvider(provider);
+  }
+  if (provider === "openai") {
+    return looksLikeOpenAiMeetingModel(trimmed)
+      ? trimmed
+      : defaultMeetingLlmModelForProvider(provider);
+  }
+  return looksLikeOpenAiMeetingModel(trimmed)
+    ? defaultMeetingLlmModelForProvider(provider)
+    : trimmed;
+}
+
 export function meetingLlmProviderLabel(provider: MeetingLlmProvider): string {
   return provider === "ollama" ? "Ollama (local)" : "OpenAI (cloud)";
 }
@@ -287,6 +311,7 @@ export interface MeetingAskRequest {
   messages?: MeetingAskMessage[];
   /** Optional provider override for this ask call */
   llmProvider?: MeetingLlmProvider;
+  meetingLlmProvider?: MeetingLlmProvider;
   meetingLlmModel?: string;
   ollamaUrl?: string;
   ollamaModel?: string;

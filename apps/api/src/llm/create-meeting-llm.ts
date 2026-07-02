@@ -3,6 +3,7 @@ import {
   DEFAULT_MEETING_LLM_PROVIDER,
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_OLLAMA_URL,
+  coerceMeetingLlmModelForProvider,
   type MeetingLlmProvider,
 } from "@cognium/meet-shared";
 
@@ -48,19 +49,11 @@ export function createMeetingLlm(
   return ai({ name: "openai", apiKey: config.openaiApiKey });
 }
 
-function looksLikeOpenAiModel(model: string): boolean {
-  const name = model.trim().toLowerCase();
-  return name.startsWith("gpt-") || name.startsWith("o1") || name.startsWith("o3");
-}
-
 export function resolveMeetingLlmModel(
   config: MeetingLlmConfig,
   model: string,
   providerOverride?: MeetingLlmProvider,
 ): string {
   const provider = providerOverride ?? config.provider;
-  if (provider !== "ollama") {
-    return model;
-  }
-  return looksLikeOpenAiModel(model) ? config.ollamaModel : model;
+  return coerceMeetingLlmModelForProvider(provider, model);
 }

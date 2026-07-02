@@ -1,22 +1,28 @@
 import type { ExtensionSettings, MeetingAskRequest } from "@cognium/meet-shared";
 import {
   DEFAULT_MAX_UPLOAD_MB,
-  DEFAULT_MEETING_LLM_MODEL,
   DEFAULT_MEETING_LLM_PROVIDER,
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_OLLAMA_URL,
+  coerceMeetingLlmModelForProvider,
   maxUploadBytesFromMb,
 } from "@cognium/meet-shared";
 
 export function meetingSettingsFormFields(
   settings: ExtensionSettings,
 ): Record<string, string> {
+  const provider = settings.meetingLlmProvider ?? DEFAULT_MEETING_LLM_PROVIDER;
+  const meetingLlmModel = coerceMeetingLlmModelForProvider(
+    provider,
+    settings.meetingLlmModel,
+  );
   return {
-    meetingLlmProvider: settings.meetingLlmProvider ?? DEFAULT_MEETING_LLM_PROVIDER,
+    meetingLlmProvider: provider,
     meetingNotesEnabled: String(settings.meetingNotesEnabled !== false),
-    meetingLlmModel: settings.meetingLlmModel ?? DEFAULT_MEETING_LLM_MODEL,
+    meetingLlmModel,
     ollamaUrl: settings.ollamaUrl ?? DEFAULT_OLLAMA_URL,
-    ollamaModel: settings.ollamaModel ?? DEFAULT_OLLAMA_MODEL,
+    ollamaModel:
+      provider === "ollama" ? meetingLlmModel : (settings.ollamaModel ?? DEFAULT_OLLAMA_MODEL),
     deleteAudioAfterTranscription: String(
       settings.deleteAudioAfterTranscription !== false,
     ),
@@ -26,13 +32,20 @@ export function meetingSettingsFormFields(
 
 export function meetingAskPayload(settings: ExtensionSettings): Pick<
   MeetingAskRequest,
-  "llmProvider" | "meetingLlmModel" | "ollamaUrl" | "ollamaModel"
+  "llmProvider" | "meetingLlmProvider" | "meetingLlmModel" | "ollamaUrl" | "ollamaModel"
 > {
+  const provider = settings.meetingLlmProvider ?? DEFAULT_MEETING_LLM_PROVIDER;
+  const meetingLlmModel = coerceMeetingLlmModelForProvider(
+    provider,
+    settings.meetingLlmModel,
+  );
   return {
-    llmProvider: settings.meetingLlmProvider ?? DEFAULT_MEETING_LLM_PROVIDER,
-    meetingLlmModel: settings.meetingLlmModel ?? DEFAULT_MEETING_LLM_MODEL,
+    llmProvider: provider,
+    meetingLlmProvider: provider,
+    meetingLlmModel,
     ollamaUrl: settings.ollamaUrl ?? DEFAULT_OLLAMA_URL,
-    ollamaModel: settings.ollamaModel ?? DEFAULT_OLLAMA_MODEL,
+    ollamaModel:
+      provider === "ollama" ? meetingLlmModel : (settings.ollamaModel ?? DEFAULT_OLLAMA_MODEL),
   };
 }
 

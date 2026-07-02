@@ -13,6 +13,7 @@ import {
   DEFAULT_MEETING_LLM_PROVIDER,
   DEFAULT_OLLAMA_URL,
   DEFAULT_TRANSCRIPTION_MODEL,
+  coerceMeetingLlmModelForProvider,
   defaultMeetingLlmModelForProvider,
   meetingLlmModelLabel,
   meetingLlmModelsForProvider,
@@ -455,8 +456,10 @@ async function saveMeetingAiSettings(els: SettingsFormElements): Promise<void> {
   const settings = await getSettings();
   const maxUploadMb = Number.parseInt(els.maxUploadMbInput.value, 10);
   const provider = els.meetingLlmProviderSelect.value as MeetingLlmProvider;
-  const meetingLlmModel =
-    els.meetingLlmModelSelect.value || defaultMeetingLlmModelForProvider(provider);
+  const meetingLlmModel = coerceMeetingLlmModelForProvider(
+    provider,
+    els.meetingLlmModelSelect.value || defaultMeetingLlmModelForProvider(provider),
+  );
   await saveSettings({
     ...settings,
     meetingLlmProvider: provider,
@@ -489,8 +492,10 @@ async function saveApiSettings(els: SettingsFormElements): Promise<void> {
   const provider =
     (els.meetingLlmProviderSelect.value as MeetingLlmProvider) ??
     settings.meetingLlmProvider;
-  const meetingLlmModel =
-    els.meetingLlmModelSelect.value || defaultMeetingLlmModelForProvider(provider);
+  const meetingLlmModel = coerceMeetingLlmModelForProvider(
+    provider,
+    els.meetingLlmModelSelect.value || defaultMeetingLlmModelForProvider(provider),
+  );
   await saveSettings({
     apiUrl: els.apiUrlInput.value.replace(/\/$/, ""),
     apiToken: els.apiTokenInput.value,

@@ -7,7 +7,6 @@ import {
   ABSOLUTE_MAX_UPLOAD_BYTES,
   maxUploadBytesFromMb,
   parseAudioCaptureMode,
-  parseMeetingLlmProvider,
   parseOpenAiKeyHeader,
   parseTranscriptionModel,
   publicRecordingMeta,
@@ -38,6 +37,7 @@ import {
 import {
   clientSettingsToRecordingFields,
   parseClientMeetingSettings,
+  parseMeetingAskClientSettings,
   recordingMeetingSettings,
 } from "./parse-client-settings.js";
 import { requireOpenAiApiKey } from "./resolve-openai-key.js";
@@ -112,6 +112,7 @@ export function createApp(deps: AppDeps) {
       recordingId?: string;
       messages?: unknown;
       llmProvider?: unknown;
+      meetingLlmProvider?: unknown;
       meetingLlmModel?: unknown;
       ollamaUrl?: unknown;
       ollamaModel?: unknown;
@@ -132,7 +133,7 @@ export function createApp(deps: AppDeps) {
         ? body.recordingId.trim()
         : undefined;
 
-    let clientSettings = parseClientMeetingSettings(body);
+    let clientSettings = parseMeetingAskClientSettings(body);
     let recordingMeta: RecordingMeta | null = null;
     if (recordingId) {
       const meta = await store.getMeta(recordingId);
@@ -146,26 +147,6 @@ export function createApp(deps: AppDeps) {
           409,
         );
       }
-      const stored = recordingMeetingSettings(meta);
-      clientSettings = parseClientMeetingSettings({
-        ...stored,
-        meetingLlmProvider: parseMeetingLlmProvider(
-          body.llmProvider,
-          stored.meetingLlmProvider,
-        ),
-        meetingLlmModel:
-          typeof body.meetingLlmModel === "string" && body.meetingLlmModel.trim()
-            ? body.meetingLlmModel.trim()
-            : stored.meetingLlmModel,
-        ollamaUrl:
-          typeof body.ollamaUrl === "string" && body.ollamaUrl.trim()
-            ? body.ollamaUrl.trim()
-            : stored.ollamaUrl,
-        ollamaModel:
-          typeof body.ollamaModel === "string" && body.ollamaModel.trim()
-            ? body.ollamaModel.trim()
-            : stored.ollamaModel,
-      });
     }
 
     const llmProvider = clientSettings.meetingLlmProvider;
@@ -450,10 +431,6 @@ export function createApp(deps: AppDeps) {
       clientSettings = parseClientMeetingSettings({
         ...clientSettings,
         ...body,
-        meetingLlmProvider: parseMeetingLlmProvider(
-          body.meetingLlmProvider,
-          clientSettings.meetingLlmProvider,
-        ),
       });
     } catch {
       // empty body is fine — use stored model
@@ -621,10 +598,6 @@ export function createApp(deps: AppDeps) {
       clientSettings = parseClientMeetingSettings({
         ...clientSettings,
         ...body,
-        meetingLlmProvider: parseMeetingLlmProvider(
-          body.llmProvider ?? body.meetingLlmProvider,
-          clientSettings.meetingLlmProvider,
-        ),
       });
     } catch {
       // empty body is fine
