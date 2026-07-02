@@ -1,19 +1,27 @@
 # Cognium Meet
 
-Record Google Meet tab audio with a Chrome extension, transcribe via OpenAI **gpt-4o-transcribe-diarize**, and save timestamped text files with speaker labels.
+Chrome extension + local API for recording browser tab audio (any `http`/`https` tab, including Google Meet), transcribing with OpenAI Whisper or diarized transcription, and generating AI meeting notes and Q&A over your saved meetings.
+
+**What you get**
+
+- **Record** tab audio with optional microphone (mixed or dual-track **You** / **Others**)
+- **Transcribe** via OpenAI `whisper-1` (fast) or `gpt-4o-transcribe-diarize` (speaker labels)
+- **Meeting notes** — summary, action items, decisions, open questions (`@ax-llm/ax`)
+- **Ask** — natural-language questions across one meeting or your full history
+- **Meeting AI** — OpenAI (BYOK in extension Settings) or local **Ollama** for notes + Ask
 
 ## Architecture
 
-- **Chrome extension** (`apps/extension`) — captures Meet tab audio with `tabCapture` + offscreen `MediaRecorder`
-- **API** (`apps/api`) — accepts WebM uploads, runs diarized transcription, writes `transcript.txt` + `transcript.json`
-- **Shared types** (`packages/shared`) — recording metadata and transcript formatting
+- **Chrome extension** (`apps/extension`) — `tabCapture` + offscreen `MediaRecorder`, IndexedDB backup, background upload/transcription/Ask in the service worker
+- **API** (`apps/api`) — multipart audio upload, ffmpeg prep/chunking, transcription, notes generation, semantic search + Ask
+- **Shared types** (`packages/shared`) — recording metadata, transcript/notes formatting, client settings
 
 ## Prerequisites
 
 - Node.js 20+
 - pnpm 9+
 - Chrome (stable)
-- OpenAI API key with access to `gpt-4o-transcribe-diarize` (set `TRANSCRIPTION_MODEL=whisper-1` for legacy Whisper)
+- OpenAI API key for transcription (and for notes/Ask when using OpenAI as the meeting AI provider). Default transcription model is `whisper-1`; choose **Diarize** in extension Settings for speaker labels.
 
 ## Setup
 
@@ -91,20 +99,20 @@ remote participants (and a solo test will be mostly silent without mic).
 ## Manual E2E test
 
 1. Start the API (`pnpm dev:api`) and load the extension.
-2. Open [Google Meet](https://meet.google.com) and join or start a meeting.
-3. Play audio in the meeting (speak or share a short audio clip).
-4. Click the Cognium Meet extension → **Start recording**.
-5. Record for at least 30 seconds, then click **Stop & transcribe**.
-6. Wait for status **Transcript ready**.
-7. In **Recent transcripts**, click **Download TXT** and verify timestamped lines with speaker labels.
-8. Download JSON and confirm `segments` with `start`, `end`, `text`, and `speaker`.
+2. Open a tab with audio (e.g. [Google Meet](https://meet.google.com) or any page playing speech).
+3. Click the Cognium Meet extension → **Start recording**.
+4. Record for at least 30 seconds, then click **Stop & transcribe**.
+5. Wait for **Transcript ready** (and **Notes ready** if meeting notes are enabled).
+6. View the transcript in the popup, or download TXT/JSON.
+7. If notes are enabled, download notes JSON/MD or open them in the popup.
+8. In **Ask**, ask a question about the recording (or all meetings) and confirm an answer with citations.
 
 ### Edge cases to verify
 
 | Case | Expected |
 |------|----------|
-| Start on non-Meet tab | Error: open a Google Meet tab |
-| Close Meet tab while recording | Recording stops; error on stop if tab gone |
+| Start on `chrome://` or restricted page | Error: open a normal `http`/`https` tab |
+| Close recorded tab while recording | Recording stops; error on stop if tab gone |
 | Empty / very short recording | Upload may fail or transcription returns minimal text |
 | Solo meeting without mic grant | Silent audio; little or no transcript (grant mic) |
 | API down during upload | Popup shows upload error |
@@ -114,13 +122,20 @@ remote participants (and a solo test will be mostly silent without mic).
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Health check |
-| `POST` | `/v1/recordings` | Upload `audio` (multipart) + optional metadata |
-| `GET` | `/v1/recordings/:id` | Poll status (`processing`, `completed`, `failed`) |
+| `POST` | `/v1/recordings` | Upload `audio` (multipart) + client settings metadata |
+| `GET` | `/v1/recordings/:id` | Poll status (`processing`, `completed`, `failed`, notes status) |
+| `POST` | `/v1/recordings/:id/retry` | Retry failed/stale transcription |
+| `DELETE` | `/v1/recordings/:id` | Delete recording and transcripts |
 | `GET` | `/v1/recordings/:id/transcript.txt` | Plain text transcript |
 | `GET` | `/v1/recordings/:id/transcript.json` | JSON with segments |
-| `POST` | `/v1/ask` | Ask a question across saved meetings (`{ question, recordingId? }`) |
+| `GET` | `/v1/recordings/:id/notes.json` | AI meeting notes (JSON) |
+| `GET` | `/v1/recordings/:id/notes.md` | AI meeting notes (Markdown) |
+| `POST` | `/v1/recordings/:id/notes` | Regenerate meeting notes |
+| `POST` | `/v1/ask` | Ask about meetings (`{ messages, recordingId?, llmProvider?, meetingLlmModel? }`) |
 
 Auth: `Authorization: Bearer <API_TOKEN>` when `API_TOKEN` is set.
+
+For OpenAI transcription/notes/Ask, send `X-OpenAI-Key` from the extension (or rely on server `OPENAI_API_KEY`). Meeting AI provider, models, upload limits, and delete-audio behavior are sent per request from extension Settings.
 
 Each Chrome profile sends a stable `X-Cognium-User-Id` (UUID in extension local storage). The API stores recordings under `storage/users/<userId>/` so profiles do not share transcripts.
 
@@ -148,6 +163,20 @@ If you have old recordings from before per-profile storage, either record again 
 }
 ```
 
+Speaker labels (`Speaker 1`, `Speaker 2`, …) appear when using **Diarize** or **dual-track** capture (**You** / **Others**).
+
+**notes.json** (when meeting notes are enabled)
+
+```json
+{
+  "recordingId": "uuid",
+  "summary": "Sprint review covered backend updates and release timing.",
+  "actionItems": ["Ship API retry endpoint by Friday"],
+  "decisions": ["Use Whisper as default transcription model"],
+  "openQuestions": ["Do we need hosted API for beta users?"]
+}
+```
+
 ## Legal / consent
 
 Recording laws vary by jurisdiction. You must inform all participants before recording.
@@ -162,9 +191,6 @@ pnpm build       # build all packages
 
 Transcripts and metadata are stored under `storage/` (gitignored).
 
-## Roadmap (not in v1)
+## Roadmap
 
-- AI summaries via `@ax-llm/ax`
-- Known-speaker **You** label via diarize reference clips
-- Real-time streaming captions
-- Meeting bot auto-join
+See [ROADMAP.md](./ROADMAP.md) for shipped features and next steps (known-speaker **You** on mixed diarize, real-time captions, hosted API, etc.).
