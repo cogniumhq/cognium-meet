@@ -1,4 +1,6 @@
 import type { MeetingLlmProvider } from "@cognium/meet-shared";
+import { meetingAskTimeoutMessage } from "@cognium/meet-shared";
+import { MeetingLlmTimeoutError } from "./meeting-llm-timeout.js";
 
 function extractOllamaMissingModel(message: string): string | undefined {
   const match = message.match(/model ['"]([^'"]+)['"] not found/i);
@@ -11,6 +13,10 @@ export function formatMeetingLlmError(
   provider: MeetingLlmProvider,
   model: string,
 ): string {
+  if (err instanceof MeetingLlmTimeoutError) {
+    return err.message;
+  }
+
   const message = err instanceof Error ? err.message : String(err);
   const cause =
     err instanceof Error && "cause" in err && err.cause instanceof Error
@@ -26,6 +32,9 @@ export function formatMeetingLlmError(
     }
     if (/ECONNREFUSED|fetch failed|unreachable/i.test(combined)) {
       return `Cannot reach Ollama. Check that it is running and the Ollama URL in extension Settings is correct.`;
+    }
+    if (/took too long|timed out|timeout/i.test(combined)) {
+      return meetingAskTimeoutMessage("ollama");
     }
   }
 

@@ -295,6 +295,24 @@ export function meetingLlmProviderLabel(provider: MeetingLlmProvider): string {
   return provider === "ollama" ? "Ollama (local)" : "OpenAI (cloud)";
 }
 
+/** Max wait for Ask LLM completion (API + extension client). */
+export const MEETING_ASK_TIMEOUT_MS_OLLAMA = 60 * 1000;
+export const MEETING_ASK_TIMEOUT_MS_OPENAI = 30 * 1000;
+
+export function meetingAskTimeoutMs(provider: MeetingLlmProvider): number {
+  return provider === "ollama"
+    ? MEETING_ASK_TIMEOUT_MS_OLLAMA
+    : MEETING_ASK_TIMEOUT_MS_OPENAI;
+}
+
+export function meetingAskTimeoutMessage(provider: MeetingLlmProvider): string {
+  const secs = Math.round(meetingAskTimeoutMs(provider) / 1000);
+  if (provider === "ollama") {
+    return `Ollama took too long (over ${secs} seconds). Try OpenAI, a smaller model, or ask a simpler question.`;
+  }
+  return `OpenAI Ask timed out after ${secs} seconds. Try again or use a faster model.`;
+}
+
 export interface MeetingAskMessage {
   role: MeetingAskRole;
   content: string;

@@ -215,6 +215,7 @@ function normalizeAskRequest(request: MeetingAskRequest): MeetingAskRequest {
 
 export async function askMeetings(
   request: MeetingAskRequest,
+  options?: { signal?: AbortSignal },
 ): Promise<MeetingAskResponse> {
   const settings = await getSettings();
   const apiUrl = await getApiUrl();
@@ -228,6 +229,7 @@ export async function askMeetings(
     method: "POST",
     headers,
     body: JSON.stringify(payload),
+    signal: options?.signal,
   });
   if (!response.ok) {
     const text = await response.text();

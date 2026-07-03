@@ -29,6 +29,7 @@ import {
 } from "../lib/storage.js";
 import { isRecordableTabUrl } from "../lib/recordable-tab.js";
 import { isMeetingAskEnabled } from "../lib/client-config.js";
+import { canRetryAsk, messagesForAskRetry } from "../lib/ask-chat.js";
 import { initSettingsForm } from "../lib/settings-form.js";
 import { getSettings } from "../lib/storage.js";
 
@@ -43,6 +44,9 @@ const meetingAskWrap = document.getElementById("meeting-ask-wrap") as HTMLDivEle
 const meetingAsk = document.getElementById("meeting-ask") as HTMLTextAreaElement;
 const meetingAskLabel = document.getElementById("meeting-ask-label") as HTMLLabelElement;
 const meetingAskBtn = document.getElementById("meeting-ask-btn") as HTMLButtonElement;
+const meetingAskCancelBtn = document.getElementById(
+  "meeting-ask-cancel-btn",
+) as HTMLButtonElement;
 const meetingAskClearScope = document.getElementById(
   "meeting-ask-clear-scope",
 ) as HTMLButtonElement;
@@ -108,6 +112,7 @@ async function init(): Promise<void> {
   });
   transcriptCopyBtn.addEventListener("click", () => void copyTranscript());
   meetingAskBtn.addEventListener("click", () => void runMeetingAsk());
+  meetingAskCancelBtn.addEventListener("click", () => void cancelMeetingAsk());
   meetingAskClearScope.addEventListener("click", () => setAskScope());
   meetingAskClearChat.addEventListener("click", () => void clearAskChatUi());
   meetingAsk.addEventListener("input", () => scheduleSaveAskChat());
@@ -403,6 +408,9 @@ function updateAskChrome(): void {
   } else {
     meetingAskClearChat.classList.add("hidden");
   }
+  meetingAskBtn.classList.toggle("hidden", askLoading);
+  meetingAskCancelBtn.classList.toggle("hidden", !askLoading);
+  meetingAsk.disabled = askLoading;
 }
 
 function scheduleSaveAskChat(): void {
@@ -443,8 +451,8 @@ async function refreshAskFromStorage(): Promise<void> {
   }
 
   meetingAskBtn.disabled = askLoading;
-  renderAskThread();
   updateAskChrome();
+  renderAskThread();
 }
 
 async function restoreAskChat(): Promise<void> {
@@ -529,7 +537,8 @@ function renderAskThread(): void {
 
   meetingAskThread.classList.remove("hidden");
 
-  for (const message of askMessages) {
+  for (let i = 0; i < askMessages.length; i++) {
+    const message = askMessages[i];
     const bubble = document.createElement("div");
     bubble.className = `meeting-ask-bubble meeting-ask-bubble--${message.role}`;
     if (message.role === "assistant") {
@@ -549,6 +558,21 @@ function renderAskThread(): void {
       appendCitationButtons(bubble, message.citations);
     }
 
+    const isLast = i === askMessages.length - 1;
+    if (
+      message.role === "assistant" &&
+      message.isError &&
+      isLast &&
+      canRetryAsk(askMessages, askLoading)
+    ) {
+      const retryBtn = document.createElement("button");
+      retryBtn.type = "button";
+      retryBtn.className = "meeting-ask-retry-btn";
+      retryBtn.textContent = "Retry";
+      retryBtn.addEventListener("click", () => void retryMeetingAsk());
+      bubble.appendChild(retryBtn);
+    }
+
     meetingAskThread.appendChild(bubble);
   }
 
@@ -562,20 +586,7 @@ function renderAskThread(): void {
   meetingAskThread.scrollTop = meetingAskThread.scrollHeight;
 }
 
-async function runMeetingAsk(): Promise<void> {
-  const question = meetingAsk.value.trim();
-  if (!question || askLoading) {
-    return;
-  }
-
-  askMessages.push({ role: "user", content: question });
-  meetingAsk.value = "";
-  askLoading = true;
-  meetingAskBtn.disabled = true;
-  renderAskThread();
-  updateAskChrome();
-  await persistAskChat(true);
-
+async function submitPendingAsk(): Promise<void> {
   try {
     const result = (await chrome.runtime.sendMessage({ type: "ASK_MEETINGS" })) as
       | { ok?: boolean; error?: string }
@@ -586,6 +597,7 @@ async function runMeetingAsk(): Promise<void> {
       meetingAskBtn.disabled = false;
       await persistAskChat(false);
       renderAskThread();
+      updateAskChrome();
       return;
     }
 
@@ -597,6 +609,64 @@ async function runMeetingAsk(): Promise<void> {
     // Popup may close while the background worker finishes the ask.
     await refreshAskFromStorage();
   }
+}
+
+async function retryMeetingAsk(): Promise<void> {
+  if (askLoading) {
+    return;
+  }
+
+  if (!messagesForAskRetry(askMessages)) {
+    return;
+  }
+
+  askLoading = true;
+  updateAskChrome();
+  renderAskThread();
+
+  try {
+    await chrome.runtime.sendMessage({ type: "ASK_RETRY" });
+    await refreshAskFromStorage();
+    if (!askLoading) {
+      meetingAsk.focus();
+    }
+  } catch {
+    await refreshAskFromStorage();
+  }
+}
+
+async function cancelMeetingAsk(): Promise<void> {
+  if (!askLoading) {
+    return;
+  }
+
+  try {
+    await chrome.runtime.sendMessage({ type: "ASK_CANCEL" });
+  } catch {
+    // Service worker may be unavailable; still clear local pending state.
+  }
+
+  askLoading = false;
+  meetingAskBtn.disabled = false;
+  await persistAskChat(false);
+  renderAskThread();
+  updateAskChrome();
+}
+
+async function runMeetingAsk(): Promise<void> {
+  const question = meetingAsk.value.trim();
+  if (!question || askLoading) {
+    return;
+  }
+
+  askMessages.push({ role: "user", content: question });
+  meetingAsk.value = "";
+  askLoading = true;
+  meetingAskBtn.disabled = true;
+  updateAskChrome();
+  renderAskThread();
+  await persistAskChat(true);
+  await submitPendingAsk();
 }
 
 function showSettings(open: boolean): void {

@@ -37,6 +37,7 @@ import {
 } from "./llm/create-meeting-llm.js";
 import { formatMeetingLlmError } from "./llm/meeting-llm-errors.js";
 import { ensureOllamaModelAvailable, listOllamaModels } from "./llm/ollama-client.js";
+import { withMeetingLlmTimeout } from "./llm/meeting-llm-timeout.js";
 import {
   clientSettingsToRecordingFields,
   parseClientMeetingSettings,
@@ -207,25 +208,33 @@ export function createApp(deps: AppDeps) {
       recordingId,
     });
 
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    console.log(
+      `[ask] started provider=${llmProvider} model=${askModel} contextChars=${context.length} meetings=${meetingCount} scoped=${recordingId ? "yes" : "no"} turns=${messages.length} question=${JSON.stringify((lastUser?.content ?? "").slice(0, 80))}`,
+    );
+
     let result;
     try {
-      result = await answerMeetingQuestion({
-        llmConfig,
+      result = await withMeetingLlmTimeout(
         llmProvider,
-        model: askModel,
-        messages,
-        context,
-        citations,
-      });
+        answerMeetingQuestion({
+          llmConfig,
+          llmProvider,
+          model: askModel,
+          messages,
+          context,
+          citations,
+        }),
+      );
     } catch (err) {
       const message = formatMeetingLlmError(err, llmProvider, askModel);
       console.error(`[ask] failed provider=${llmProvider} model=${askModel}:`, err);
-      return c.json({ error: message }, 502);
+      const status = err instanceof Error && err.name === "MeetingLlmTimeoutError" ? 504 : 502;
+      return c.json({ error: message }, status);
     }
 
-    const lastUser = [...messages].reverse().find((m) => m.role === "user");
     console.log(
-      `[ask] provider=${llmProvider} model=${askModel} turns=${messages.length} question=${JSON.stringify((lastUser?.content ?? "").slice(0, 80))} meetings=${meetingCount} insufficient=${result.insufficientContext}`,
+      `[ask] done provider=${llmProvider} model=${askModel} contextChars=${context.length} meetings=${meetingCount} insufficient=${result.insufficientContext}`,
     );
 
     return c.json({

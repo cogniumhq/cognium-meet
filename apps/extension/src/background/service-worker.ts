@@ -13,18 +13,27 @@ import {
 import {
   addToHistory,
   getSettings,
+  loadAskChat,
   replaceHistoryEntry,
+  saveAskChat,
   updateHistoryEntry,
   type StoredRecording,
 } from "../lib/storage.js";
 import { fetchRecordingStatus, pollRecording, uploadRecording, askMeetings } from "../lib/upload.js";
-import { loadAskChat, saveAskChat } from "../lib/storage.js";
+import { messagesForAskRetry } from "../lib/ask-chat.js";
+import {
+  DEFAULT_MEETING_LLM_PROVIDER,
+  meetingAskTimeoutMessage,
+  meetingAskTimeoutMs,
+  type MeetingLlmProvider,
+} from "@cognium/meet-shared";
 import {
   deletePendingAudio,
   loadPendingAudio,
   savePendingAudio,
 } from "../lib/pending-audio-store.js";
 import { isRecordableTabUrl, tabRecordingTitle } from "../lib/recordable-tab.js";
+import { messagesForAskRetry } from "../lib/ask-chat.js";
 
 const OFFSCREEN_URL = chrome.runtime.getURL("src/offscreen/offscreen.html");
 
@@ -34,6 +43,8 @@ let recordingState: PersistedRecordingState = { isRecording: false };
 let isFinalizingRecording = false;
 const activeTranscriptionPolls = new Set<string>();
 let askInFlight = false;
+let askAbortController: AbortController | null = null;
+let askCancelledByUser = false;
 
 interface OffscreenStopResponse {
   type: string;
@@ -163,6 +174,16 @@ async function handleMessage(
 
     if (message.type === "ASK_MEETINGS") {
       await handleMeetingAsk(sendResponse);
+      return;
+    }
+
+    if (message.type === "ASK_CANCEL") {
+      await handleMeetingAskCancel(sendResponse);
+      return;
+    }
+
+    if (message.type === "ASK_RETRY") {
+      await handleMeetingAskRetry(sendResponse);
       return;
     }
 
@@ -977,6 +998,50 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function handleMeetingAskCancel(
+  sendResponse: (response: unknown) => void,
+): Promise<void> {
+  askCancelledByUser = true;
+  askAbortController?.abort();
+
+  const chat = await loadAskChat();
+  if (chat?.pending) {
+    await saveAskChat({ ...chat, pending: false });
+  }
+
+  askInFlight = false;
+  sendResponse({ ok: true, cancelled: true });
+}
+
+async function handleMeetingAskRetry(
+  sendResponse: (response: unknown) => void,
+): Promise<void> {
+  if (askInFlight) {
+    sendResponse({ ok: false, error: "Ask already in progress" });
+    return;
+  }
+
+  const chat = await loadAskChat();
+  if (!chat) {
+    sendResponse({ ok: false, error: "No ask to retry" });
+    return;
+  }
+
+  const retryMessages = messagesForAskRetry(chat.messages);
+  if (!retryMessages) {
+    sendResponse({ ok: false, error: "Nothing to retry" });
+    return;
+  }
+
+  await saveAskChat({
+    ...chat,
+    messages: retryMessages,
+    pending: true,
+  });
+
+  await handleMeetingAsk(sendResponse);
+}
+
 async function handleMeetingAsk(
   sendResponse: (response: unknown) => void,
 ): Promise<void> {
@@ -992,11 +1057,27 @@ async function handleMeetingAsk(
   }
 
   askInFlight = true;
+  askCancelledByUser = false;
+  askAbortController = new AbortController();
+
+  const settings = await getSettings();
+  const provider: MeetingLlmProvider =
+    settings.meetingLlmProvider ?? DEFAULT_MEETING_LLM_PROVIDER;
+  const clientTimeoutMs = meetingAskTimeoutMs(provider) + 20_000;
+  const timeoutId = setTimeout(() => {
+    if (!askCancelledByUser) {
+      askAbortController?.abort();
+    }
+  }, clientTimeoutMs);
+
   try {
-    const response = await askMeetings({
-      messages: chat.messages,
-      recordingId: chat.scopeRecordingId,
-    });
+    const response = await askMeetings(
+      {
+        messages: chat.messages,
+        recordingId: chat.scopeRecordingId,
+      },
+      { signal: askAbortController.signal },
+    );
 
     const latest = await loadAskChat();
     if (!latest?.pending) {
@@ -1019,7 +1100,16 @@ async function handleMeetingAsk(
     });
     sendResponse({ ok: true });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    if (askCancelledByUser) {
+      sendResponse({ ok: true, cancelled: true });
+      return;
+    }
+
+    let message = err instanceof Error ? err.message : String(err);
+    if (err instanceof Error && err.name === "AbortError") {
+      message = meetingAskTimeoutMessage(provider);
+    }
+
     const latest = await loadAskChat();
     if (latest?.pending) {
       await saveAskChat({
@@ -1033,7 +1123,10 @@ async function handleMeetingAsk(
     }
     sendResponse({ ok: false, error: message });
   } finally {
+    clearTimeout(timeoutId);
     askInFlight = false;
+    askAbortController = null;
+    askCancelledByUser = false;
   }
 }
 

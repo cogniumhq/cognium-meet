@@ -79,9 +79,18 @@
               placeholder="Ask a question… (Enter to send)"
               autocomplete="off"
             ></textarea>
-            <button id="meeting-ask-btn" type="button" class="secondary meeting-ask-btn">
-              Send
-            </button>
+            <div class="meeting-ask-actions">
+              <button id="meeting-ask-btn" type="button" class="secondary meeting-ask-btn">
+                Send
+              </button>
+              <button
+                id="meeting-ask-cancel-btn"
+                type="button"
+                class="secondary meeting-ask-cancel-btn hidden"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
           <ul id="history-list" class="history-scroll"></ul>
         </section>

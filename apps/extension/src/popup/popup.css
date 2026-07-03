@@ -259,6 +259,27 @@ button:disabled {
   width: 100%;
 }
 
+.meeting-ask-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.meeting-ask-actions .meeting-ask-btn,
+.meeting-ask-actions .meeting-ask-cancel-btn {
+  flex: 1;
+  width: auto;
+  margin: 0;
+}
+
+.meeting-ask-cancel-btn {
+  border-color: color-mix(in srgb, var(--danger, #c62828) 55%, var(--border));
+  color: var(--danger, #c62828);
+}
+
+.meeting-ask-cancel-btn:hover {
+  background: color-mix(in srgb, var(--danger, #c62828) 8%, var(--surface));
+}
+
 .meeting-ask-thread {
   margin-bottom: 8px;
   max-height: 200px;
@@ -310,6 +331,22 @@ button:disabled {
 .meeting-ask-bubble--error {
   border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
   color: var(--danger);
+}
+
+.meeting-ask-retry-btn {
+  margin-top: 8px;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
+  border-radius: 6px;
+  background: transparent;
+  color: var(--danger, #c62828);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.meeting-ask-retry-btn:hover {
+  background: color-mix(in srgb, var(--danger, #c62828) 8%, var(--surface));
 }
 
 .meeting-ask-bubble--loading {

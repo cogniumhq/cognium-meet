@@ -23,6 +23,10 @@ const MAX_CONTEXT_CHARS = 90_000;
 const MAX_MEETINGS = 5;
 const PER_MEETING_TRANSCRIPT_CHARS = 14_000;
 
+/** Scoped Ask (single recording): notes + transcript excerpt, not the full transcript. */
+const SCOPED_MAX_CONTEXT_CHARS = 14_000;
+const SCOPED_TRANSCRIPT_EXCERPT_CHARS = 8_000;
+
 function compactNotes(notes: MeetingNotes): string {
   return formatMeetingNotesMarkdown(notes);
 }
@@ -33,6 +37,26 @@ function excerpt(text: string, max = 220): string {
     return trimmed;
   }
   return `${trimmed.slice(0, max)}…`;
+}
+
+/** Head + tail excerpt for long transcripts (scoped Ask). */
+export function excerptTranscript(text: string, maxChars: number): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= maxChars) {
+    return trimmed;
+  }
+
+  const marker = "\n\n[… middle of transcript omitted …]\n\n";
+  const budget = maxChars - marker.length;
+  const headChars = Math.floor(budget * 0.45);
+  const tailChars = budget - headChars;
+
+  return (
+    `[Transcript excerpt — ${trimmed.length.toLocaleString()} characters total; beginning and end shown]\n` +
+    trimmed.slice(0, headChars) +
+    marker +
+    trimmed.slice(-tailChars)
+  );
 }
 
 async function pickRecordingIds(
@@ -71,7 +95,7 @@ async function pickRecordingIds(
 async function formatMeetingBlock(
   store: RecordingStore,
   meta: RecordingMeta,
-  transcriptLimit: number,
+  opts: { transcriptLimit: number; scoped: boolean },
 ): Promise<{ block: string; excerpt: string } | null> {
   const title = meta.meetingTitle?.trim() || "Recording";
   const date = new Date(meta.startedAt).toISOString().slice(0, 10);
@@ -91,10 +115,12 @@ async function formatMeetingBlock(
   const transcript = await store.readTranscriptJson(meta.id);
   if (transcript && transcript.segments.length > 0) {
     let text = segmentsToPlainText(transcript.segments);
-    if (text.length > transcriptLimit) {
+    if (opts.scoped) {
+      text = excerptTranscript(text, opts.transcriptLimit);
+    } else if (text.length > opts.transcriptLimit) {
       text =
-        `[Transcript truncated — showing last ${transcriptLimit} characters]\n` +
-        text.slice(-transcriptLimit);
+        `[Transcript truncated — showing last ${opts.transcriptLimit} characters]\n` +
+        text.slice(-opts.transcriptLimit);
     }
     parts.push("", "## Transcript", text);
     if (!excerptSource) {
@@ -118,6 +144,7 @@ export async function buildAskContext(opts: {
   question: string;
   recordingId?: string;
 }): Promise<AskContextResult> {
+  const scoped = Boolean(opts.recordingId);
   const ids = await pickRecordingIds(
     opts.store,
     opts.searchIndex,
@@ -129,9 +156,10 @@ export async function buildAskContext(opts: {
     return { context: "", citations: [], meetingCount: 0 };
   }
 
-  const perMeetingLimit = opts.recordingId
-    ? MAX_CONTEXT_CHARS
+  const perMeetingLimit = scoped
+    ? SCOPED_TRANSCRIPT_EXCERPT_CHARS
     : PER_MEETING_TRANSCRIPT_CHARS;
+  const maxContextChars = scoped ? SCOPED_MAX_CONTEXT_CHARS : MAX_CONTEXT_CHARS;
 
   const blocks: string[] = [];
   const citations: AskContextCitation[] = [];
@@ -142,13 +170,16 @@ export async function buildAskContext(opts: {
       continue;
     }
 
-    const formatted = await formatMeetingBlock(opts.store, meta, perMeetingLimit);
+    const formatted = await formatMeetingBlock(opts.store, meta, {
+      transcriptLimit: perMeetingLimit,
+      scoped,
+    });
     if (!formatted) {
       continue;
     }
 
     const nextContext = [...blocks, formatted.block].join("\n\n---\n\n");
-    if (nextContext.length > MAX_CONTEXT_CHARS && blocks.length > 0) {
+    if (nextContext.length > maxContextChars && blocks.length > 0) {
       break;
     }
 
@@ -163,8 +194,15 @@ export async function buildAskContext(opts: {
     }
   }
 
+  let context = blocks.join("\n\n---\n\n");
+  if (context.length > maxContextChars) {
+    context =
+      `[Context trimmed to ${maxContextChars.toLocaleString()} characters]\n` +
+      context.slice(0, maxContextChars);
+  }
+
   return {
-    context: blocks.join("\n\n---\n\n"),
+    context,
     citations,
     meetingCount: citations.length,
   };
