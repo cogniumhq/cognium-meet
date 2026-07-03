@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from "uuid";
 import { COGNIUM_USER_ID_HEADER, OPENAI_API_KEY_HEADER, type RecordingMeta } from "@cognium/meet-shared";
 import {
   ABSOLUTE_MAX_UPLOAD_BYTES,
+  DEFAULT_OLLAMA_URL,
   maxUploadBytesFromMb,
   parseAudioCaptureMode,
   parseOpenAiKeyHeader,
@@ -34,6 +35,8 @@ import {
   meetingLlmConfigFromFields,
   resolveMeetingLlmModel,
 } from "./llm/create-meeting-llm.js";
+import { formatMeetingLlmError } from "./llm/meeting-llm-errors.js";
+import { ensureOllamaModelAvailable, listOllamaModels } from "./llm/ollama-client.js";
 import {
   clientSettingsToRecordingFields,
   parseClientMeetingSettings,
@@ -101,6 +104,19 @@ export function createApp(deps: AppDeps) {
     c.set("store", userStores.store);
     c.set("searchIndex", userStores.searchIndex);
     await next();
+  });
+
+  app.get("/v1/ollama/models", async (c) => {
+    const ollamaUrl = c.req.query("ollamaUrl")?.trim() || DEFAULT_OLLAMA_URL;
+    try {
+      const models = (await listOllamaModels(ollamaUrl)).sort((a, b) =>
+        a.localeCompare(b),
+      );
+      return c.json({ models });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, 502);
+    }
   });
 
   app.post("/v1/ask", async (c) => {
@@ -175,6 +191,15 @@ export function createApp(deps: AppDeps) {
       llmProvider,
     );
 
+    if (llmProvider === "ollama") {
+      try {
+        await ensureOllamaModelAvailable(clientSettings.ollamaUrl, askModel);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return c.json({ error: message }, 400);
+      }
+    }
+
     const { context, citations, meetingCount } = await buildAskContextForMessages({
       store,
       searchIndex,
@@ -182,14 +207,21 @@ export function createApp(deps: AppDeps) {
       recordingId,
     });
 
-    const result = await answerMeetingQuestion({
-      llmConfig,
-      llmProvider,
-      model: askModel,
-      messages,
-      context,
-      citations,
-    });
+    let result;
+    try {
+      result = await answerMeetingQuestion({
+        llmConfig,
+        llmProvider,
+        model: askModel,
+        messages,
+        context,
+        citations,
+      });
+    } catch (err) {
+      const message = formatMeetingLlmError(err, llmProvider, askModel);
+      console.error(`[ask] failed provider=${llmProvider} model=${askModel}:`, err);
+      return c.json({ error: message }, 502);
+    }
 
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     console.log(

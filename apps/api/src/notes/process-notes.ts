@@ -3,6 +3,8 @@ import {
   meetingLlmConfigFromFields,
   resolveMeetingLlmModel,
 } from "../llm/create-meeting-llm.js";
+import { formatMeetingLlmError } from "../llm/meeting-llm-errors.js";
+import { ensureOllamaModelAvailable } from "../llm/ollama-client.js";
 import type { RecordingStore } from "../storage/recording-store.js";
 import type { UserStoreRegistry } from "../storage/user-store-registry.js";
 import { recordingMeetingSettings } from "../parse-client-settings.js";
@@ -131,6 +133,20 @@ async function processMeetingNotes(
     `[notes] started user=${userId} id=${id} provider=${llmProvider} model=${notesModel}`,
   );
 
+  if (llmProvider === "ollama") {
+    try {
+      await ensureOllamaModelAvailable(clientSettings.ollamaUrl, notesModel);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await saveNotesMeta(store, meta, {
+        notesStatus: "failed",
+        notesError: message,
+      });
+      console.error(`[notes] failed user=${userId} id=${id} error=${message}`);
+      return;
+    }
+  }
+
   try {
     const notes = await generateMeetingNotes({
       llmConfig,
@@ -159,7 +175,7 @@ async function processMeetingNotes(
       `[notes] completed user=${userId} id=${id} provider=${llmProvider} actions=${notes.actionItems.length} decisions=${notes.decisions.length}`,
     );
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatMeetingLlmError(err, llmProvider, notesModel);
     const latest = await store.getMeta(id);
     if (latest) {
       await saveNotesMeta(store, latest, {

@@ -5,6 +5,11 @@ import {
   openExtensionMicSettings,
   requestMicAccessViaBackground,
 } from "./mic-access.js";
+import {
+  isOllamaModelInstalled,
+  listOllamaModelsFromUrl,
+  pickOllamaModel,
+} from "./ollama-models.js";
 import { getSettings, getOpenAiApiKey, saveOpenAiApiKey, saveSettings } from "./storage.js";
 import {
   AUDIO_CAPTURE_MODES,
@@ -112,7 +117,11 @@ export async function initSettingsForm(root: ParentNode): Promise<void> {
     settings.meetingLlmModel ??
     (llmProvider === "ollama" ? settings.ollamaModel : undefined) ??
     defaultMeetingLlmModelForProvider(llmProvider);
-  populateMeetingLlmModels(els, llmProvider, savedLlmModel);
+  if (llmProvider === "ollama") {
+    await refreshOllamaModelOptions(els, savedLlmModel);
+  } else {
+    populateMeetingLlmModels(els, llmProvider, savedLlmModel);
+  }
   els.meetingNotesEnabledInput.checked = settings.meetingNotesEnabled !== false;
   els.meetingAskEnabledInput.checked = settings.meetingAskEnabled !== false;
   els.ollamaUrlInput.value = settings.ollamaUrl ?? DEFAULT_OLLAMA_URL;
@@ -145,11 +154,15 @@ export async function initSettingsForm(root: ParentNode): Promise<void> {
   els.captureModeSelect.addEventListener("change", () => void saveCaptureMode(els));
   els.meetingLlmProviderSelect.addEventListener("change", () => {
     const provider = els.meetingLlmProviderSelect.value as MeetingLlmProvider;
-    populateMeetingLlmModels(
-      els,
-      provider,
-      defaultMeetingLlmModelForProvider(provider),
-    );
+    if (provider === "ollama") {
+      void refreshOllamaModelOptions(els, defaultMeetingLlmModelForProvider("ollama"));
+    } else {
+      populateMeetingLlmModels(
+        els,
+        provider,
+        defaultMeetingLlmModelForProvider(provider),
+      );
+    }
     updateOllamaFieldsVisibility(els);
     void saveMeetingAiSettings(els);
   });
@@ -162,7 +175,12 @@ export async function initSettingsForm(root: ParentNode): Promise<void> {
   els.meetingLlmModelSelect.addEventListener("change", () =>
     void saveMeetingAiSettings(els),
   );
-  els.ollamaUrlInput.addEventListener("change", () => void saveMeetingAiSettings(els));
+  els.ollamaUrlInput.addEventListener("change", () => {
+    if (els.meetingLlmProviderSelect.value === "ollama") {
+      void refreshOllamaModelOptions(els, els.meetingLlmModelSelect.value);
+    }
+    void saveMeetingAiSettings(els);
+  });
   els.deleteAudioInput.addEventListener("change", () => void saveMeetingAiSettings(els));
   els.maxUploadMbInput.addEventListener("change", () => void saveMeetingAiSettings(els));
 
@@ -390,7 +408,23 @@ function populateMeetingLlmModels(
   els: SettingsFormElements,
   provider: MeetingLlmProvider,
   selected?: string,
+  installedOllamaModels?: string[],
 ): void {
+  if (provider === "ollama" && installedOllamaModels && installedOllamaModels.length > 0) {
+    const fallback = defaultMeetingLlmModelForProvider("ollama");
+    const effective = pickOllamaModel(installedOllamaModels, selected, fallback);
+
+    els.meetingLlmModelSelect.innerHTML = "";
+    for (const model of installedOllamaModels) {
+      const option = document.createElement("option");
+      option.value = model;
+      option.textContent = model;
+      els.meetingLlmModelSelect.appendChild(option);
+    }
+    els.meetingLlmModelSelect.value = effective;
+    return;
+  }
+
   const presets = meetingLlmModelsForProvider(provider);
   const effective =
     selected?.trim() || defaultMeetingLlmModelForProvider(provider);
@@ -405,6 +439,29 @@ function populateMeetingLlmModels(
     els.meetingLlmModelSelect.appendChild(option);
   }
   els.meetingLlmModelSelect.value = effective;
+}
+
+async function refreshOllamaModelOptions(
+  els: SettingsFormElements,
+  savedModel?: string,
+): Promise<void> {
+  const url = els.ollamaUrlInput.value.trim() || DEFAULT_OLLAMA_URL;
+  try {
+    const installed = await listOllamaModelsFromUrl(url);
+    const fallback = defaultMeetingLlmModelForProvider("ollama");
+    const selected = pickOllamaModel(installed, savedModel, fallback);
+    populateMeetingLlmModels(els, "ollama", selected, installed);
+    if (savedModel && !isOllamaModelInstalled(installed, savedModel)) {
+      setSaveStatus(
+        els,
+        `Model "${savedModel}" is not installed — using ${selected}.`,
+        true,
+      );
+      await saveMeetingAiSettings(els);
+    }
+  } catch {
+    populateMeetingLlmModels(els, "ollama", savedModel);
+  }
 }
 
 function updateCaptureModeUi(
