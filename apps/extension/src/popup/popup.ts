@@ -17,21 +17,30 @@ import {
 } from "../lib/upload.js";
 import { deletePendingAudio, downloadPendingAudio, loadPendingAudio } from "../lib/pending-audio-store.js";
 import {
+  addAskTab,
+  ASK_WORKSPACE_KEY,
+  createAskTab,
+  findPendingAskTab,
   findServerProcessingEntry,
-  clearAskChat,
+  getActiveAskTab,
   getHistory,
+  getSettings,
   HISTORY_KEY,
-  loadAskChat,
+  loadAskWorkspace,
+  MAX_ASK_TABS,
+  removeAskTab,
   removeHistoryEntry,
-  saveAskChat,
+  saveAskWorkspace,
+  setActiveAskTab,
+  updateAskTab,
   updateHistoryEntry,
+  type AskChatWorkspace,
   type StoredRecording,
 } from "../lib/storage.js";
 import { isRecordableTabUrl } from "../lib/recordable-tab.js";
 import { isMeetingAskEnabled } from "../lib/client-config.js";
 import { canRetryAsk, messagesForAskRetry } from "../lib/ask-chat.js";
 import { initSettingsForm } from "../lib/settings-form.js";
-import { getSettings } from "../lib/storage.js";
 
 const startBtn = document.getElementById("start-btn") as HTMLButtonElement;
 const stopOnlyBtn = document.getElementById("stop-only-btn") as HTMLButtonElement;
@@ -54,6 +63,8 @@ const meetingAskClearChat = document.getElementById(
   "meeting-ask-clear-chat",
 ) as HTMLButtonElement;
 const meetingAskThread = document.getElementById("meeting-ask-thread") as HTMLDivElement;
+const meetingAskTabs = document.getElementById("meeting-ask-tabs") as HTMLDivElement;
+const meetingAskNewTab = document.getElementById("meeting-ask-new-tab") as HTMLButtonElement;
 const mainView = document.getElementById("main-view") as HTMLDivElement;
 const transcriptView = document.getElementById("transcript-view") as HTMLDivElement;
 const settingsView = document.getElementById("settings-view") as HTMLDivElement;
@@ -80,6 +91,7 @@ let watchingTranscriptionId: string | undefined;
 let displayedPercentFloor = 0;
 let historyRenderGen = 0;
 let currentTranscript: TranscriptResult | undefined;
+let askActiveTabId = "";
 let askScopeRecordingId: string | undefined;
 let askScopeMeetingTitle: string | undefined;
 let askMessages: MeetingAskMessage[] = [];
@@ -113,7 +125,8 @@ async function init(): Promise<void> {
   transcriptCopyBtn.addEventListener("click", () => void copyTranscript());
   meetingAskBtn.addEventListener("click", () => void runMeetingAsk());
   meetingAskCancelBtn.addEventListener("click", () => void cancelMeetingAsk());
-  meetingAskClearScope.addEventListener("click", () => setAskScope());
+  meetingAskNewTab.addEventListener("click", () => void createNewAskTab());
+  meetingAskClearScope.addEventListener("click", () => void setAskScope());
   meetingAskClearChat.addEventListener("click", () => void clearAskChatUi());
   meetingAsk.addEventListener("input", () => scheduleSaveAskChat());
   meetingAsk.addEventListener("keydown", (event) => {
@@ -124,16 +137,20 @@ async function init(): Promise<void> {
   });
   window.addEventListener("pagehide", () => {
     window.clearTimeout(askChatSaveTimer);
-    void persistAskChat();
+    void persistActiveTab();
   });
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === "local" && changes.meetingAskChat) {
+    if (area === "local" && changes[ASK_WORKSPACE_KEY]) {
       void refreshAskFromStorage();
     }
   });
   await initSettingsForm(document.getElementById("settings-root")!);
   await applyMeetingAskVisibility();
-  await restoreAskChat();
+  try {
+    await restoreAskChat();
+  } catch (err) {
+    console.error("[popup] restore Ask chat failed", err);
+  }
 
   startBtn.addEventListener("click", () => void startRecording());
   stopOnlyBtn.addEventListener("click", () => void stopRecording(false));
@@ -382,24 +399,162 @@ async function applyMeetingAskVisibility(): Promise<void> {
   meetingAskWrap.classList.toggle("hidden", !isMeetingAskEnabled(settings));
 }
 
-function setAskScope(item?: StoredRecording): void {
-  const prevScope = askScopeRecordingId;
-  askScopeRecordingId = item?.id;
-  askScopeMeetingTitle = item?.meetingTitle;
-  if (item) {
-    meetingAskLabel.textContent = `Ask about: ${item.meetingTitle ?? "Recording"}`;
+function updateAskScopeChrome(): void {
+  if (askScopeRecordingId) {
+    meetingAskLabel.textContent = `Ask about: ${askScopeMeetingTitle ?? "Recording"}`;
     meetingAskClearScope.classList.remove("hidden");
-    meetingAsk.focus();
   } else {
     meetingAskLabel.textContent = "Ask about your meetings";
     meetingAskClearScope.classList.add("hidden");
   }
+}
+
+function applyActiveTabToUi(tab: {
+  scopeRecordingId?: string;
+  scopeMeetingTitle?: string;
+  messages: MeetingAskMessage[];
+  draftInput?: string;
+  pending?: boolean;
+}): void {
+  askScopeRecordingId = tab.scopeRecordingId;
+  askScopeMeetingTitle = tab.scopeMeetingTitle;
+  askMessages = tab.messages ?? [];
+  askLoading = tab.pending === true;
+  meetingAsk.value = tab.draftInput ?? "";
+  updateAskScopeChrome();
+}
+
+function renderAskTabs(workspace: AskChatWorkspace): void {
+  meetingAskTabs.innerHTML = "";
+
+  for (const tab of workspace.tabs) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "meeting-ask-tab";
+    btn.setAttribute("role", "tab");
+    btn.setAttribute("aria-selected", tab.id === workspace.activeTabId ? "true" : "false");
+    if (tab.id === workspace.activeTabId) {
+      btn.classList.add("meeting-ask-tab--active");
+    }
+    if (tab.pending) {
+      btn.classList.add("meeting-ask-tab--pending");
+    }
+
+    const label = document.createElement("span");
+    label.className = "meeting-ask-tab-label";
+    label.textContent = tab.label;
+    btn.appendChild(label);
+
+    if (workspace.tabs.length > 1) {
+      const close = document.createElement("span");
+      close.className = "meeting-ask-tab-close";
+      close.setAttribute("aria-label", "Close chat");
+      close.textContent = "×";
+      close.addEventListener("click", (event) => {
+        event.stopPropagation();
+        void closeAskTab(tab.id);
+      });
+      btn.appendChild(close);
+    }
+
+    btn.addEventListener("click", () => void switchAskTab(tab.id));
+    meetingAskTabs.appendChild(btn);
+  }
+
+  meetingAskNewTab.disabled = workspace.tabs.length >= MAX_ASK_TABS;
+}
+
+async function persistActiveTab(pending = askLoading): Promise<void> {
+  if (!askActiveTabId) {
+    return;
+  }
+  let workspace = await loadAskWorkspace();
+  workspace = updateAskTab(workspace, askActiveTabId, {
+    scopeRecordingId: askScopeRecordingId,
+    scopeMeetingTitle: askScopeMeetingTitle,
+    messages: askMessages,
+    draftInput: meetingAsk.value,
+    pending,
+  });
+  await saveAskWorkspace(workspace);
+}
+
+async function switchAskTab(tabId: string): Promise<void> {
+  if (tabId === askActiveTabId) {
+    return;
+  }
+  await persistActiveTab(askLoading);
+  let workspace = await loadAskWorkspace();
+  workspace = setActiveAskTab(workspace, tabId);
+  await saveAskWorkspace(workspace);
+  await refreshAskFromStorage();
+}
+
+async function createNewAskTab(opts?: {
+  scopeRecordingId?: string;
+  scopeMeetingTitle?: string;
+}): Promise<void> {
+  await persistActiveTab(askLoading);
+  let workspace = await loadAskWorkspace();
+  if (workspace.tabs.length >= MAX_ASK_TABS) {
+    return;
+  }
+  const tab = createAskTab(opts);
+  workspace = addAskTab(workspace, tab);
+  await saveAskWorkspace(workspace);
+  await refreshAskFromStorage();
+  meetingAsk.focus();
+}
+
+async function openAskForRecording(item: StoredRecording): Promise<void> {
+  await persistActiveTab(askLoading);
+  const workspace = await loadAskWorkspace();
+  const existing = workspace.tabs.find((tab) => tab.scopeRecordingId === item.id);
+  if (existing) {
+    await switchAskTab(existing.id);
+    meetingAsk.focus();
+    return;
+  }
+  await createNewAskTab({
+    scopeRecordingId: item.id,
+    scopeMeetingTitle: item.meetingTitle,
+  });
+}
+
+async function closeAskTab(tabId: string): Promise<void> {
+  const workspace = await loadAskWorkspace();
+  const closing = workspace.tabs.find((tab) => tab.id === tabId);
+  if (!closing) {
+    return;
+  }
+  if (closing.pending) {
+    await cancelMeetingAsk();
+  }
+  if (tabId === askActiveTabId) {
+    askMessages = [];
+    meetingAsk.value = "";
+    askLoading = false;
+  }
+  const next = removeAskTab(workspace, tabId);
+  await saveAskWorkspace(next);
+  await refreshAskFromStorage();
+}
+
+async function setAskScope(item?: StoredRecording): Promise<void> {
+  const prevScope = askScopeRecordingId;
+  await persistActiveTab(askLoading);
+  askScopeRecordingId = item?.id;
+  askScopeMeetingTitle = item?.meetingTitle;
   if (prevScope !== askScopeRecordingId && askMessages.length > 0) {
     askMessages = [];
     renderAskThread();
   }
+  updateAskScopeChrome();
   updateAskChrome();
-  void persistAskChat();
+  await persistActiveTab();
+  if (item) {
+    meetingAsk.focus();
+  }
 }
 
 function updateAskChrome(): void {
@@ -408,62 +563,34 @@ function updateAskChrome(): void {
   } else {
     meetingAskClearChat.classList.add("hidden");
   }
-  meetingAskBtn.classList.toggle("hidden", askLoading);
-  meetingAskCancelBtn.classList.toggle("hidden", !askLoading);
-  meetingAsk.disabled = askLoading;
+  const anyPending = askLoading;
+  meetingAskBtn.classList.toggle("hidden", anyPending);
+  meetingAskCancelBtn.classList.toggle("hidden", !anyPending);
+  meetingAsk.disabled = anyPending;
 }
 
 function scheduleSaveAskChat(): void {
   window.clearTimeout(askChatSaveTimer);
   askChatSaveTimer = window.setTimeout(() => {
-    void persistAskChat();
+    void persistActiveTab();
   }, 250);
 }
 
-async function persistAskChat(pending = askLoading): Promise<void> {
-  await saveAskChat({
-    scopeRecordingId: askScopeRecordingId,
-    scopeMeetingTitle: askScopeMeetingTitle,
-    messages: askMessages,
-    draftInput: meetingAsk.value,
-    pending,
-  });
-}
-
 async function refreshAskFromStorage(): Promise<void> {
-  const chat = await loadAskChat();
-  if (!chat) {
-    return;
-  }
-
-  askMessages = chat.messages ?? [];
-  askScopeRecordingId = chat.scopeRecordingId;
-  askScopeMeetingTitle = chat.scopeMeetingTitle;
-  askLoading = chat.pending === true;
-  meetingAsk.value = chat.draftInput ?? "";
-
-  if (chat.scopeRecordingId) {
-    meetingAskLabel.textContent = `Ask about: ${chat.scopeMeetingTitle ?? "Recording"}`;
-    meetingAskClearScope.classList.remove("hidden");
-  } else {
-    meetingAskLabel.textContent = "Ask about your meetings";
-    meetingAskClearScope.classList.add("hidden");
-  }
-
+  const workspace = await loadAskWorkspace();
+  const active = getActiveAskTab(workspace);
+  askActiveTabId = active.id;
+  applyActiveTabToUi(active);
+  renderAskTabs(workspace);
   meetingAskBtn.disabled = askLoading;
   updateAskChrome();
   renderAskThread();
 }
 
 async function restoreAskChat(): Promise<void> {
-  const chat = await loadAskChat();
-  if (!chat) {
-    return;
-  }
-
   await refreshAskFromStorage();
-
-  if (askLoading) {
+  const workspace = await loadAskWorkspace();
+  if (findPendingAskTab(workspace)) {
     void resumeMeetingAskIfNeeded();
   }
 }
@@ -483,7 +610,9 @@ async function clearAskChatUi(): Promise<void> {
   meetingAskBtn.disabled = false;
   renderAskThread();
   updateAskChrome();
-  await clearAskChat();
+  await persistActiveTab(false);
+  const workspace = await loadAskWorkspace();
+  renderAskTabs(workspace);
 }
 
 function citationToRecording(citation: MeetingAskCitation): StoredRecording {
@@ -595,7 +724,7 @@ async function submitPendingAsk(): Promise<void> {
     if (result?.ok === false && result.error === "No pending ask") {
       askLoading = false;
       meetingAskBtn.disabled = false;
-      await persistAskChat(false);
+      await persistActiveTab(false);
       renderAskThread();
       updateAskChrome();
       return;
@@ -648,7 +777,7 @@ async function cancelMeetingAsk(): Promise<void> {
 
   askLoading = false;
   meetingAskBtn.disabled = false;
-  await persistAskChat(false);
+  await persistActiveTab(false);
   renderAskThread();
   updateAskChrome();
 }
@@ -659,13 +788,18 @@ async function runMeetingAsk(): Promise<void> {
     return;
   }
 
+  const workspace = await loadAskWorkspace();
+  if (findPendingAskTab(workspace)) {
+    return;
+  }
+
   askMessages.push({ role: "user", content: question });
   meetingAsk.value = "";
   askLoading = true;
   meetingAskBtn.disabled = true;
   updateAskChrome();
   renderAskThread();
-  await persistAskChat(true);
+  await persistActiveTab(true);
   await submitPendingAsk();
 }
 
@@ -1278,7 +1412,7 @@ async function renderHistory(): Promise<void> {
       ask.className = "link-btn";
       ask.textContent = "Ask";
       ask.addEventListener("click", () => {
-        setAskScope(item);
+        void openAskForRecording(item);
       });
       links.appendChild(ask);
 

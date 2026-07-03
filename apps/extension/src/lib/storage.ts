@@ -1,5 +1,18 @@
 import type { ExtensionSettings, MeetingAskMessage, NotesStatus, TranscriptionProgress } from "@cognium/meet-shared";
 import {
+  ASK_WORKSPACE_KEY,
+  createAskTab,
+  defaultAskWorkspace,
+  findPendingAskTab,
+  getActiveAskTab,
+  LEGACY_ASK_CHAT_KEY,
+  migrateLegacyAskChat,
+  normalizeAskWorkspace,
+  updateAskTab,
+  type AskChatTab,
+  type AskChatWorkspace,
+} from "./ask-workspace.js";
+import {
   DEFAULT_API_URL,
   DEFAULT_AUDIO_CAPTURE_MODE,
   DEFAULT_DELETE_AUDIO_AFTER_TRANSCRIPTION,
@@ -87,7 +100,24 @@ export interface StoredRecording {
 }
 
 const HISTORY_KEY = "recordingHistory";
-const ASK_CHAT_KEY = "meetingAskChat";
+
+/** @deprecated Single-tab ask state — migrated to AskChatWorkspace on load. */
+export type { AskChatTab, AskChatWorkspace };
+export {
+  addAskTab,
+  ASK_WORKSPACE_KEY,
+  createAskTab,
+  defaultAskWorkspace,
+  findPendingAskTab,
+  getActiveAskTab,
+  LEGACY_ASK_CHAT_KEY,
+  MAX_ASK_TABS,
+  migrateLegacyAskChat,
+  normalizeAskWorkspace,
+  removeAskTab,
+  setActiveAskTab,
+  updateAskTab,
+} from "./ask-workspace.js";
 
 export interface AskChatState {
   scopeRecordingId?: string;
@@ -98,21 +128,67 @@ export interface AskChatState {
   pending?: boolean;
 }
 
-export async function loadAskChat(): Promise<AskChatState | undefined> {
-  const result = await chrome.storage.local.get(ASK_CHAT_KEY);
-  const chat = result[ASK_CHAT_KEY] as AskChatState | undefined;
-  if (chat && Array.isArray(chat.messages)) {
-    return chat;
+export async function loadAskWorkspace(): Promise<AskChatWorkspace> {
+  const result = await chrome.storage.local.get([ASK_WORKSPACE_KEY, LEGACY_ASK_CHAT_KEY]);
+  const normalized = normalizeAskWorkspace(result[ASK_WORKSPACE_KEY]);
+  if (normalized) {
+    return normalized;
   }
-  return undefined;
+
+  const legacy = result[LEGACY_ASK_CHAT_KEY] as AskChatState | undefined;
+  if (legacy && Array.isArray(legacy.messages)) {
+    const migrated = migrateLegacyAskChat(legacy);
+    await saveAskWorkspace(migrated);
+    await chrome.storage.local.remove(LEGACY_ASK_CHAT_KEY);
+    return migrated;
+  }
+
+  const fresh = defaultAskWorkspace();
+  await saveAskWorkspace(fresh);
+  return fresh;
 }
 
+export async function saveAskWorkspace(workspace: AskChatWorkspace): Promise<void> {
+  await chrome.storage.local.set({ [ASK_WORKSPACE_KEY]: workspace });
+}
+
+export async function clearAskWorkspace(): Promise<void> {
+  await chrome.storage.local.remove(ASK_WORKSPACE_KEY);
+  await chrome.storage.local.remove(LEGACY_ASK_CHAT_KEY);
+}
+
+/** @deprecated Use loadAskWorkspace */
+export async function loadAskChat(): Promise<AskChatState | undefined> {
+  const ws = await loadAskWorkspace();
+  const pending = findPendingAskTab(ws);
+  const tab = pending ?? getActiveAskTab(ws);
+  return {
+    scopeRecordingId: tab.scopeRecordingId,
+    scopeMeetingTitle: tab.scopeMeetingTitle,
+    messages: tab.messages,
+    draftInput: tab.draftInput,
+    pending: tab.pending,
+  };
+}
+
+/** @deprecated Use saveAskWorkspace */
 export async function saveAskChat(state: AskChatState): Promise<void> {
-  await chrome.storage.local.set({ [ASK_CHAT_KEY]: state });
+  let ws = await loadAskWorkspace();
+  const tab = getActiveAskTab(ws);
+  ws = updateAskTab(ws, tab.id, {
+    scopeRecordingId: state.scopeRecordingId,
+    scopeMeetingTitle: state.scopeMeetingTitle,
+    messages: state.messages,
+    draftInput: state.draftInput,
+    pending: state.pending,
+  });
+  await saveAskWorkspace(ws);
 }
 
+/** @deprecated Use clearAskWorkspace */
 export async function clearAskChat(): Promise<void> {
-  await chrome.storage.local.remove(ASK_CHAT_KEY);
+  const ws = defaultAskWorkspace();
+  await saveAskWorkspace(ws);
 }
 
 export { HISTORY_KEY };

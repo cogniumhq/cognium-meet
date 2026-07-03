@@ -34,6 +34,8 @@ body {
   background: var(--bg);
   color: var(--text);
   width: 360px;
+  max-height: 600px;
+  overflow-y: auto;
   line-height: 1.45;
 }
 
@@ -184,7 +186,7 @@ button:disabled {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .history-header h2 {
@@ -203,8 +205,103 @@ button:disabled {
   background: var(--surface) !important;
 }
 
+.meeting-ask-tabbar {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.meeting-ask-tabs {
+  display: flex;
+  flex: 1;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  min-width: 0;
+}
+
+.meeting-ask-tabs::-webkit-scrollbar {
+  height: 4px;
+}
+
+.meeting-ask-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 140px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px 8px 0 0;
+  background: color-mix(in srgb, var(--surface) 90%, var(--bg));
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.2;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.meeting-ask-tab--active {
+  color: var(--text);
+  border-bottom-color: transparent;
+  background: var(--surface);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.meeting-ask-tab--pending .meeting-ask-tab-label::after {
+  content: " …";
+  font-style: italic;
+}
+
+.meeting-ask-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meeting-ask-tab-close {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 12px;
+  text-align: center;
+  color: var(--text-dim);
+}
+
+.meeting-ask-tab-close:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.meeting-ask-new-tab {
+  flex-shrink: 0;
+  width: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.meeting-ask-new-tab:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.meeting-ask-new-tab:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .meeting-ask-wrap {
-  margin-bottom: 10px;
+  margin-bottom: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
 }
 
 .meeting-ask-header {
@@ -417,9 +514,9 @@ button:disabled {
 
 .history-scroll {
   list-style: none;
-  margin: 0;
+  margin: 0 0 12px;
   padding: 6px 8px 6px 6px;
-  max-height: 220px;
+  max-height: 200px;
   overflow-y: auto;
   scrollbar-gutter: stable;
   background: var(--surface);

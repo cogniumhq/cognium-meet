@@ -12,10 +12,13 @@ import {
 } from "../lib/recording-state.js";
 import {
   addToHistory,
+  findPendingAskTab,
+  getActiveAskTab,
   getSettings,
-  loadAskChat,
+  loadAskWorkspace,
   replaceHistoryEntry,
-  saveAskChat,
+  saveAskWorkspace,
+  updateAskTab,
   updateHistoryEntry,
   type StoredRecording,
 } from "../lib/storage.js";
@@ -998,16 +1001,25 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function patchPendingAskTab(
+  patch: Parameters<typeof updateAskTab>[2],
+): Promise<boolean> {
+  const workspace = await loadAskWorkspace();
+  const pending = findPendingAskTab(workspace);
+  if (!pending?.pending) {
+    return false;
+  }
+  await saveAskWorkspace(updateAskTab(workspace, pending.id, patch));
+  return true;
+}
+
 async function handleMeetingAskCancel(
   sendResponse: (response: unknown) => void,
 ): Promise<void> {
   askCancelledByUser = true;
   askAbortController?.abort();
 
-  const chat = await loadAskChat();
-  if (chat?.pending) {
-    await saveAskChat({ ...chat, pending: false });
-  }
+  await patchPendingAskTab({ pending: false });
 
   askInFlight = false;
   sendResponse({ ok: true, cancelled: true });
@@ -1021,23 +1033,20 @@ async function handleMeetingAskRetry(
     return;
   }
 
-  const chat = await loadAskChat();
-  if (!chat) {
-    sendResponse({ ok: false, error: "No ask to retry" });
-    return;
-  }
-
-  const retryMessages = messagesForAskRetry(chat.messages);
+  const workspace = await loadAskWorkspace();
+  const tab = getActiveAskTab(workspace);
+  const retryMessages = messagesForAskRetry(tab.messages);
   if (!retryMessages) {
     sendResponse({ ok: false, error: "Nothing to retry" });
     return;
   }
 
-  await saveAskChat({
-    ...chat,
-    messages: retryMessages,
-    pending: true,
-  });
+  await saveAskWorkspace(
+    updateAskTab(workspace, tab.id, {
+      messages: retryMessages,
+      pending: true,
+    }),
+  );
 
   await handleMeetingAsk(sendResponse);
 }
@@ -1050,8 +1059,9 @@ async function handleMeetingAsk(
     return;
   }
 
-  const chat = await loadAskChat();
-  if (!chat?.pending) {
+  const workspace = await loadAskWorkspace();
+  const tab = findPendingAskTab(workspace);
+  if (!tab?.pending) {
     sendResponse({ ok: false, error: "No pending ask" });
     return;
   }
@@ -1070,34 +1080,38 @@ async function handleMeetingAsk(
     }
   }, clientTimeoutMs);
 
+  const pendingTabId = tab.id;
+
   try {
     const response = await askMeetings(
       {
-        messages: chat.messages,
-        recordingId: chat.scopeRecordingId,
+        messages: tab.messages,
+        recordingId: tab.scopeRecordingId,
       },
       { signal: askAbortController.signal },
     );
 
-    const latest = await loadAskChat();
-    if (!latest?.pending) {
+    const latest = await loadAskWorkspace();
+    const latestTab = latest.tabs.find((t) => t.id === pendingTabId);
+    if (!latestTab?.pending) {
       sendResponse({ ok: true, skipped: true });
       return;
     }
 
-    await saveAskChat({
-      ...latest,
-      pending: false,
-      messages: [
-        ...latest.messages,
-        {
-          role: "assistant",
-          content: response.answer,
-          insufficientContext: response.insufficientContext,
-          citations: response.citations,
-        },
-      ],
-    });
+    await saveAskWorkspace(
+      updateAskTab(latest, pendingTabId, {
+        pending: false,
+        messages: [
+          ...latestTab.messages,
+          {
+            role: "assistant",
+            content: response.answer,
+            insufficientContext: response.insufficientContext,
+            citations: response.citations,
+          },
+        ],
+      }),
+    );
     sendResponse({ ok: true });
   } catch (err) {
     if (askCancelledByUser) {
@@ -1110,16 +1124,18 @@ async function handleMeetingAsk(
       message = meetingAskTimeoutMessage(provider);
     }
 
-    const latest = await loadAskChat();
-    if (latest?.pending) {
-      await saveAskChat({
-        ...latest,
-        pending: false,
-        messages: [
-          ...latest.messages,
-          { role: "assistant", content: message, isError: true },
-        ],
-      });
+    const latest = await loadAskWorkspace();
+    const latestTab = latest.tabs.find((t) => t.id === pendingTabId);
+    if (latestTab?.pending) {
+      await saveAskWorkspace(
+        updateAskTab(latest, pendingTabId, {
+          pending: false,
+          messages: [
+            ...latestTab.messages,
+            { role: "assistant", content: message, isError: true },
+          ],
+        }),
+      );
     }
     sendResponse({ ok: false, error: message });
   } finally {
