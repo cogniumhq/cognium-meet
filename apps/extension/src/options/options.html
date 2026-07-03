@@ -56,28 +56,26 @@
             </div>
           </div>
 
-          <div class="field">
-            <label for="meeting-llm-provider">Meeting AI provider (Ask + notes)</label>
-            <select id="meeting-llm-provider"></select>
+          <p class="settings-note">
+            Click <strong>Save API Settings</strong> after editing URL, token, or OpenAI key.
+            All other settings on this page save automatically when changed.
+          </p>
+          <div class="connection-save-row">
+            <button
+              id="save-settings-btn"
+              type="button"
+              class="save-settings-btn"
+              disabled
+            >
+              Save API Settings
+            </button>
+            <p
+              id="connection-save-status"
+              class="field-status hidden"
+              role="status"
+              aria-live="polite"
+            ></p>
           </div>
-
-          <div class="field">
-            <label for="meeting-llm-model">Meeting AI model (notes + Ask)</label>
-            <select id="meeting-llm-model"></select>
-          </div>
-
-          <div id="ollama-fields">
-            <div class="field">
-              <label for="ollama-url">Ollama URL</label>
-              <input
-                id="ollama-url"
-                type="url"
-                placeholder="http://localhost:11434"
-              />
-            </div>
-          </div>
-
-          <button id="save-settings-btn" type="button" class="save-settings-btn">Save connection</button>
         </section>
 
         <section class="settings-card">
@@ -105,7 +103,34 @@
 
         <section class="settings-card">
           <h3>Meeting AI &amp; storage</h3>
-          <p>Notes, Q&amp;A, upload limits, and whether raw audio is kept after transcription.</p>
+          <p>Provider and model for notes and Ask. Changes here save automatically.</p>
+          <p
+            id="meeting-ai-status"
+            class="field-status hidden"
+            role="status"
+            aria-live="polite"
+          ></p>
+
+          <div class="field">
+            <label for="meeting-llm-provider">Meeting AI provider (Ask + notes)</label>
+            <select id="meeting-llm-provider"></select>
+          </div>
+
+          <div class="field">
+            <label for="meeting-llm-model">Meeting AI model (notes + Ask)</label>
+            <select id="meeting-llm-model"></select>
+          </div>
+
+          <div id="ollama-fields">
+            <div class="field">
+              <label for="ollama-url">Ollama URL</label>
+              <input
+                id="ollama-url"
+                type="url"
+                placeholder="http://localhost:11434"
+              />
+            </div>
+          </div>
 
           <div class="field field--checkbox">
             <label>
@@ -162,9 +187,13 @@
               <option value="">Chrome default</option>
             </select>
           </div>
+          <p
+            id="mic-save-status"
+            class="field-status hidden"
+            role="status"
+            aria-live="polite"
+          ></p>
         </section>
-
-        <p id="save-status" class="save-status hidden"></p>
       </div>
     </main>
     <script type="module" src="./options.ts"></script>

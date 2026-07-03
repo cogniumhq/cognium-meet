@@ -154,6 +154,33 @@
   margin-top: 2px;
 }
 
+.save-settings-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.connection-save-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  margin-top: 8px;
+}
+
+.field-status {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.field-status--ok {
+  color: #4ade80;
+}
+
+.field-status--error {
+  color: #f87171;
+}
+
 .mic-row {
   display: flex;
   align-items: flex-start;
@@ -225,16 +252,7 @@
   font-weight: 600;
 }
 
-.save-status {
-  margin: 0;
-  font-size: 12px;
-}
-
-.save-status--ok {
-  color: #86efac;
-}
-
-.save-status--error {
+.field-status--error {
   color: #fca5a5;
 }
 

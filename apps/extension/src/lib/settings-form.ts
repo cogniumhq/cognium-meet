@@ -31,6 +31,60 @@ import {
   type TranscriptionModel,
 } from "@cognium/meet-shared";
 
+let savedApiUrl = "";
+let savedApiToken = "";
+let savedOpenAiApiKey = "";
+
+function normalizeApiUrl(url: string): string {
+  return url.trim().replace(/\/$/, "");
+}
+
+function setFieldStatus(
+  el: HTMLElement,
+  text: string,
+  isError: boolean,
+): void {
+  if (!text) {
+    el.textContent = "";
+    el.classList.add("hidden");
+    el.classList.remove("field-status--error", "field-status--ok");
+    return;
+  }
+  el.textContent = text;
+  el.classList.remove("hidden", "field-status--error", "field-status--ok");
+  el.classList.add(isError ? "field-status--error" : "field-status--ok");
+}
+
+function isConnectionDirty(els: SettingsFormElements): boolean {
+  return (
+    normalizeApiUrl(els.apiUrlInput.value) !== savedApiUrl ||
+    els.apiTokenInput.value !== savedApiToken ||
+    els.openaiApiKeyInput.value !== savedOpenAiApiKey
+  );
+}
+
+function updateConnectionSaveUi(els: SettingsFormElements): void {
+  const dirty = isConnectionDirty(els);
+  els.saveBtn.disabled = !dirty;
+  if (dirty) {
+    setFieldStatus(els.connectionSaveStatus, "", false);
+  }
+}
+
+function snapshotConnectionFields(els: SettingsFormElements): void {
+  savedApiUrl = normalizeApiUrl(els.apiUrlInput.value);
+  savedApiToken = els.apiTokenInput.value;
+  savedOpenAiApiKey = els.openaiApiKeyInput.value;
+  updateConnectionSaveUi(els);
+}
+
+function bindConnectionDirtyTracking(els: SettingsFormElements): void {
+  const onEdit = () => updateConnectionSaveUi(els);
+  els.apiUrlInput.addEventListener("input", onEdit);
+  els.apiTokenInput.addEventListener("input", onEdit);
+  els.openaiApiKeyInput.addEventListener("input", onEdit);
+}
+
 export interface SettingsFormElements {
   apiUrlInput: HTMLInputElement;
   apiTokenInput: HTMLInputElement;
@@ -38,7 +92,9 @@ export interface SettingsFormElements {
   openaiApiKeyInput: HTMLInputElement;
   openaiKeyToggleBtn: HTMLButtonElement;
   saveBtn: HTMLButtonElement;
-  saveStatus: HTMLElement;
+  connectionSaveStatus: HTMLElement;
+  meetingAiStatus: HTMLElement;
+  micSaveStatus: HTMLElement;
   micBadge: HTMLElement;
   micBtn: HTMLButtonElement;
   micSettingsBtn: HTMLButtonElement;
@@ -67,7 +123,9 @@ export function getSettingsFormElements(root: ParentNode): SettingsFormElements 
     openaiApiKeyInput: root.querySelector("#openai-api-key") as HTMLInputElement,
     openaiKeyToggleBtn: root.querySelector("#openai-key-toggle") as HTMLButtonElement,
     saveBtn: root.querySelector("#save-settings-btn") as HTMLButtonElement,
-    saveStatus: root.querySelector("#save-status") as HTMLElement,
+    connectionSaveStatus: root.querySelector("#connection-save-status") as HTMLElement,
+    meetingAiStatus: root.querySelector("#meeting-ai-status") as HTMLElement,
+    micSaveStatus: root.querySelector("#mic-save-status") as HTMLElement,
     micBadge: root.querySelector("#mic-badge") as HTMLElement,
     micBtn: root.querySelector("#mic-btn") as HTMLButtonElement,
     micSettingsBtn: root.querySelector("#mic-settings-btn") as HTMLButtonElement,
@@ -129,6 +187,8 @@ export async function initSettingsForm(root: ParentNode): Promise<void> {
   els.maxUploadMbInput.value = String(settings.maxUploadMb ?? DEFAULT_MAX_UPLOAD_MB);
   updateOllamaFieldsVisibility(els);
   updateCaptureModeUi(els, settings.transcriptionModel);
+  snapshotConnectionFields(els);
+  bindConnectionDirtyTracking(els);
 
   els.tokenToggleBtn.addEventListener("click", () => {
     const showing = els.apiTokenInput.type === "text";
@@ -280,15 +340,15 @@ async function requestMic(els: SettingsFormElements): Promise<void> {
       const denied = /not allowed|permission|denied|dismissed/i.test(lastError);
       setMicBadge(els, denied ? "denied" : "unknown");
       if (!denied) {
-        setSaveStatus(els, lastError || "Could not open microphone", true);
+        setFieldStatus(els.micSaveStatus, lastError || "Could not open microphone", true);
       } else {
-        els.saveStatus.classList.add("hidden");
+        setFieldStatus(els.micSaveStatus, "", false);
       }
       return;
     }
 
     setMicBadge(els, "granted");
-    setSaveStatus(els, "Microphone allowed — choose your device below.", false);
+    setFieldStatus(els.micSaveStatus, "Microphone allowed — choose your device below.", false);
     const settings = await getSettings();
     await populateMicDevices(els, settings.microphoneDeviceId ?? "");
   } finally {
@@ -330,7 +390,7 @@ async function saveMicDevice(els: SettingsFormElements): Promise<void> {
     ...settings,
     microphoneDeviceId: els.micDeviceSelect.value || undefined,
   });
-  setSaveStatus(els, "Microphone device saved.", false);
+  setFieldStatus(els.micSaveStatus, "Microphone device saved.", false);
 }
 
 function populateTranscriptionModels(
@@ -452,12 +512,14 @@ async function refreshOllamaModelOptions(
     const selected = pickOllamaModel(installed, savedModel, fallback);
     populateMeetingLlmModels(els, "ollama", selected, installed);
     if (savedModel && !isOllamaModelInstalled(installed, savedModel)) {
-      setSaveStatus(
-        els,
+      setFieldStatus(
+        els.meetingAiStatus,
         `Model "${savedModel}" is not installed — using ${selected}.`,
         true,
       );
       await saveMeetingAiSettings(els);
+    } else {
+      setFieldStatus(els.meetingAiStatus, "", false);
     }
   } catch {
     populateMeetingLlmModels(els, "ollama", savedModel);
@@ -488,7 +550,6 @@ async function saveCaptureMode(els: SettingsFormElements): Promise<void> {
     captureMode,
   });
   updateCaptureModeUi(els, settings.transcriptionModel);
-  setSaveStatus(els, "Capture mode saved.", false);
 }
 
 async function saveTranscriptionModel(els: SettingsFormElements): Promise<void> {
@@ -501,7 +562,6 @@ async function saveTranscriptionModel(els: SettingsFormElements): Promise<void> 
     ...settings,
     transcriptionModel: model,
   });
-  setSaveStatus(els, "Transcription model saved.", false);
 }
 
 function updateOllamaFieldsVisibility(els: SettingsFormElements): void {
@@ -529,53 +589,21 @@ async function saveMeetingAiSettings(els: SettingsFormElements): Promise<void> {
     maxUploadMb: Number.isFinite(maxUploadMb) ? maxUploadMb : DEFAULT_MAX_UPLOAD_MB,
   });
   updateOllamaFieldsVisibility(els);
-  setSaveStatus(els, "AI & storage settings saved.", false);
-}
-
-async function saveMeetingLlmProvider(els: SettingsFormElements): Promise<void> {
-  await saveMeetingAiSettings(els);
+  setFieldStatus(els.meetingAiStatus, "", false);
 }
 
 async function saveApiSettings(els: SettingsFormElements): Promise<void> {
+  if (!isConnectionDirty(els)) {
+    return;
+  }
+
   const settings = await getSettings();
-  const captureMode =
-    (els.captureModeSelect.value as AudioCaptureMode) || settings.captureMode;
-  const transcriptionModel =
-    captureMode === "dual-track"
-      ? settings.transcriptionModel
-      : ((els.transcriptionModelSelect.value as TranscriptionModel) ||
-          settings.transcriptionModel);
-  const maxUploadMb = Number.parseInt(els.maxUploadMbInput.value, 10);
-  const provider =
-    (els.meetingLlmProviderSelect.value as MeetingLlmProvider) ??
-    settings.meetingLlmProvider;
-  const meetingLlmModel = coerceMeetingLlmModelForProvider(
-    provider,
-    els.meetingLlmModelSelect.value || defaultMeetingLlmModelForProvider(provider),
-  );
   await saveSettings({
-    apiUrl: els.apiUrlInput.value.replace(/\/$/, ""),
+    ...settings,
+    apiUrl: normalizeApiUrl(els.apiUrlInput.value),
     apiToken: els.apiTokenInput.value,
-    transcriptionModel,
-    captureMode,
-    meetingLlmProvider: provider,
-    meetingNotesEnabled: els.meetingNotesEnabledInput.checked,
-    meetingAskEnabled: els.meetingAskEnabledInput.checked,
-    meetingLlmModel,
-    ollamaUrl: els.ollamaUrlInput.value.trim() || DEFAULT_OLLAMA_URL,
-    ollamaModel: provider === "ollama" ? meetingLlmModel : settings.ollamaModel,
-    deleteAudioAfterTranscription: els.deleteAudioInput.checked,
-    maxUploadMb: Number.isFinite(maxUploadMb) ? maxUploadMb : DEFAULT_MAX_UPLOAD_MB,
-    microphoneDeviceId: els.micDeviceSelect.disabled
-      ? settings.microphoneDeviceId
-      : els.micDeviceSelect.value || undefined,
   });
   await saveOpenAiApiKey(els.openaiApiKeyInput.value);
-  setSaveStatus(els, "Connection settings saved.", false);
-}
-
-function setSaveStatus(els: SettingsFormElements, text: string, isError: boolean): void {
-  els.saveStatus.textContent = text;
-  els.saveStatus.classList.remove("hidden", "save-status--error", "save-status--ok");
-  els.saveStatus.classList.add(isError ? "save-status--error" : "save-status--ok");
+  snapshotConnectionFields(els);
+  setFieldStatus(els.connectionSaveStatus, "API settings saved.", false);
 }
