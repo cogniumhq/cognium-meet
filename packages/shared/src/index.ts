@@ -84,6 +84,10 @@ export interface RecordingMeta {
   ollamaModel?: string;
   /** Delete raw audio after successful transcription. */
   deleteAudioAfterTranscription?: boolean;
+  /** Tab audio still on server (derived at read time, not persisted in meta JSON). */
+  hasAudio?: boolean;
+  /** Mic track still on server (derived at read time). */
+  hasMicAudio?: boolean;
   /**
    * Per-recording OpenAI key from extension (BYOK). Stored server-side for async jobs;
    * never returned in API responses.

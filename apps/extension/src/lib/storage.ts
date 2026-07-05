@@ -97,6 +97,11 @@ export interface StoredRecording {
   progress?: TranscriptionProgress;
   notesStatus?: NotesStatus;
   notesError?: string;
+  /** Copied from settings at upload — used to show server audio download when kept. */
+  deleteAudioAfterTranscription?: boolean;
+  /** Synced from API when tab audio is still on the server. */
+  hasAudio?: boolean;
+  hasMicAudio?: boolean;
 }
 
 const HISTORY_KEY = "recordingHistory";

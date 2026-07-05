@@ -23,6 +23,7 @@ import {
   type StoredRecording,
 } from "../lib/storage.js";
 import { fetchRecordingStatus, pollRecording, uploadRecording, askMeetings } from "../lib/upload.js";
+import { isDeleteAudioAfterTranscription } from "../lib/client-config.js";
 import { messagesForAskRetry } from "../lib/ask-chat.js";
 import {
   DEFAULT_MEETING_LLM_PROVIDER,
@@ -36,7 +37,6 @@ import {
   savePendingAudio,
 } from "../lib/pending-audio-store.js";
 import { isRecordableTabUrl, tabRecordingTitle } from "../lib/recordable-tab.js";
-import { messagesForAskRetry } from "../lib/ask-chat.js";
 
 const OFFSCREEN_URL = chrome.runtime.getURL("src/offscreen/offscreen.html");
 
@@ -709,6 +709,8 @@ async function finalizeRecordingBytes(
   }
 
   try {
+    const settings = await getSettings();
+    const deleteLocalAfterUpload = isDeleteAudioAfterTranscription(settings);
     const upload = await uploadRecording({
       bytes: audioBytes,
       mimeType,
@@ -719,7 +721,9 @@ async function finalizeRecordingBytes(
       durationMs,
     });
 
-    await deletePendingAudio(localAudioId);
+    if (deleteLocalAfterUpload) {
+      await deletePendingAudio(localAudioId);
+    }
 
     const entry: StoredRecording = {
       id: upload.id,
@@ -728,6 +732,10 @@ async function finalizeRecordingBytes(
       durationMs,
       status: "processing",
       createdAt: new Date().toISOString(),
+      deleteAudioAfterTranscription: deleteLocalAfterUpload,
+      hasAudio: true,
+      hasMicAudio: Boolean(micBytes?.length),
+      ...(deleteLocalAfterUpload ? {} : { localAudioId }),
     };
     await addToHistory(entry);
     void trackTranscription(upload.id);
@@ -783,6 +791,8 @@ async function handleRetryUpload(
   }
 
   try {
+    const settings = await getSettings();
+    const deleteLocalAfterUpload = isDeleteAudioAfterTranscription(settings);
     const upload = await uploadRecording({
       bytes: pending.bytes,
       mimeType: pending.meta.mimeType,
@@ -793,7 +803,9 @@ async function handleRetryUpload(
       durationMs: pending.meta.durationMs,
     });
 
-    await deletePendingAudio(localAudioId);
+    if (deleteLocalAfterUpload) {
+      await deletePendingAudio(localAudioId);
+    }
 
     const entry: StoredRecording = {
       id: upload.id,
@@ -802,6 +814,10 @@ async function handleRetryUpload(
       durationMs: pending.meta.durationMs,
       status: "processing",
       createdAt: new Date().toISOString(),
+      deleteAudioAfterTranscription: deleteLocalAfterUpload,
+      hasAudio: true,
+      hasMicAudio: Boolean(pending.micBytes?.length),
+      ...(deleteLocalAfterUpload ? {} : { localAudioId }),
     };
     await replaceHistoryEntry(localAudioId, entry);
     void trackTranscription(upload.id);
@@ -1162,6 +1178,8 @@ async function trackTranscription(id: string): Promise<void> {
           progress: update.progress,
           notesStatus: update.notesStatus,
           notesError: update.notesError,
+          hasAudio: update.hasAudio,
+          hasMicAudio: update.hasMicAudio,
         });
       },
     });
@@ -1171,6 +1189,8 @@ async function trackTranscription(id: string): Promise<void> {
       progress: undefined,
       notesStatus: meta.notesStatus,
       notesError: meta.notesError,
+      hasAudio: meta.hasAudio,
+      hasMicAudio: meta.hasMicAudio,
     });
     if (meta.status === "completed" && meta.notesStatus !== "completed" && meta.notesStatus !== "failed" && meta.notesStatus !== "skipped") {
       void trackMeetingNotes(id);

@@ -260,6 +260,28 @@ export async function downloadTranscript(
   URL.revokeObjectURL(url);
 }
 
+export async function downloadRecordingAudio(
+  id: string,
+  track: "tab" | "mic",
+  filename: string,
+): Promise<void> {
+  const apiUrl = await getApiUrl();
+  const headers = await buildApiHeaders();
+  const suffix = track === "mic" ? "mic-audio" : "audio";
+  const response = await fetch(`${apiUrl}/v1/recordings/${id}/${suffix}`, { headers });
+  if (!response.ok) {
+    throw new Error(`Audio download failed (${response.status})`);
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 export async function downloadMeetingNotes(
   id: string,
   format: "json" | "md",

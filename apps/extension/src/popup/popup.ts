@@ -10,6 +10,7 @@ import {
 import {
   deleteServerRecording,
   downloadMeetingNotes,
+  downloadRecordingAudio,
   downloadTranscript,
   fetchRecordingStatus,
   fetchTranscript,
@@ -1102,7 +1103,16 @@ async function refreshStaleHistory(): Promise<void> {
       item.status === "completed" &&
       !item.localAudioId &&
       (item.notesStatus === "pending" || item.notesStatus === "processing");
-    if (item.status !== "processing" && item.status !== "failed" && !needsNotesPoll) {
+    const needsAudioSync =
+      item.status === "completed" &&
+      !item.localAudioId &&
+      (item.hasAudio === undefined || item.deleteAudioAfterTranscription === false);
+    if (
+      item.status !== "processing" &&
+      item.status !== "failed" &&
+      !needsNotesPoll &&
+      !needsAudioSync
+    ) {
       continue;
     }
     if (item.localAudioId) {
@@ -1114,7 +1124,9 @@ async function refreshStaleHistory(): Promise<void> {
         meta.status !== item.status ||
         meta.error !== item.error ||
         meta.progress ||
-        meta.notesStatus !== item.notesStatus
+        meta.notesStatus !== item.notesStatus ||
+        meta.hasAudio !== item.hasAudio ||
+        meta.hasMicAudio !== item.hasMicAudio
       ) {
         await updateHistoryEntry(item.id, {
           status: meta.status,
@@ -1122,6 +1134,9 @@ async function refreshStaleHistory(): Promise<void> {
           progress: meta.progress,
           notesStatus: meta.notesStatus,
           notesError: meta.notesError,
+          hasAudio: meta.hasAudio,
+          hasMicAudio: meta.hasMicAudio,
+          deleteAudioAfterTranscription: meta.deleteAudioAfterTranscription,
         });
       }
     } catch {
@@ -1232,29 +1247,59 @@ async function removeFromHistory(item: {
   setStatus(onServer ? "Recording deleted from server" : "Removed from list");
 }
 
-function appendLocalAudioActions(
-  li: HTMLLIElement,
-  item: { id: string; localAudioId?: string; meetingTitle?: string },
-  uploadLabel = "Retry upload",
-  hasMicTrack = false,
+function recordingFilenameBase(meetingTitle?: string): string {
+  return (meetingTitle ?? "recording").replace(/[/\\?%*:|"<>]/g, "-");
+}
+
+function appendServerAudioDownloads(
+  links: HTMLDivElement,
+  item: StoredRecording,
+  hasMicTrack: boolean,
+): void {
+  const showTab = item.hasAudio === true || item.deleteAudioAfterTranscription === false;
+  const showMic = hasMicTrack || item.hasMicAudio === true;
+  if (!showTab && !showMic) {
+    return;
+  }
+
+  const base = recordingFilenameBase(item.meetingTitle);
+  if (showTab) {
+    const downloadTab = document.createElement("button");
+    downloadTab.type = "button";
+    downloadTab.className = "link-btn";
+    downloadTab.textContent = showMic ? "Download tab" : "Download audio";
+    downloadTab.addEventListener("click", () => {
+      void downloadRecordingAudio(item.id, "tab", showMic ? `${base}-tab.webm` : `${base}.webm`).catch(
+        (err) => setStatus(err instanceof Error ? err.message : String(err), true),
+      );
+    });
+    links.appendChild(downloadTab);
+  }
+
+  if (showMic) {
+    const downloadMic = document.createElement("button");
+    downloadMic.type = "button";
+    downloadMic.className = "link-btn";
+    downloadMic.textContent = "Download mic";
+    downloadMic.addEventListener("click", () => {
+      void downloadRecordingAudio(item.id, "mic", `${base}-mic.webm`).catch((err) =>
+        setStatus(err instanceof Error ? err.message : String(err), true),
+      );
+    });
+    links.appendChild(downloadMic);
+  }
+}
+
+function appendLocalAudioDownloadsOnly(
+  links: HTMLDivElement,
+  item: { localAudioId?: string; meetingTitle?: string },
+  hasMicTrack: boolean,
 ): void {
   if (!item.localAudioId) {
     return;
   }
 
-  const links = document.createElement("div");
-  links.className = "history-links";
-  const base = (item.meetingTitle ?? "recording").replace(/[/\\?%*:|"<>]/g, "-");
-
-  const upload = document.createElement("button");
-  upload.type = "button";
-  upload.className = "link-btn";
-  upload.textContent = uploadLabel;
-  upload.addEventListener("click", () => {
-    void retryUpload(item.localAudioId!);
-  });
-  links.appendChild(upload);
-
+  const base = recordingFilenameBase(item.meetingTitle);
   const downloadTab = document.createElement("button");
   downloadTab.type = "button";
   downloadTab.className = "link-btn";
@@ -1280,6 +1325,31 @@ function appendLocalAudioActions(
     });
     links.appendChild(downloadMic);
   }
+}
+
+function appendLocalAudioActions(
+  li: HTMLLIElement,
+  item: { id: string; localAudioId?: string; meetingTitle?: string },
+  uploadLabel = "Retry upload",
+  hasMicTrack = false,
+): void {
+  if (!item.localAudioId) {
+    return;
+  }
+
+  const links = document.createElement("div");
+  links.className = "history-links";
+
+  const upload = document.createElement("button");
+  upload.type = "button";
+  upload.className = "link-btn";
+  upload.textContent = uploadLabel;
+  upload.addEventListener("click", () => {
+    void retryUpload(item.localAudioId!);
+  });
+  links.appendChild(upload);
+
+  appendLocalAudioDownloadsOnly(links, item, hasMicTrack);
 
   const del = document.createElement("button");
   del.type = "button";
@@ -1438,6 +1508,12 @@ async function renderHistory(): Promise<void> {
 
       links.appendChild(txt);
       links.appendChild(json);
+
+      if (item.localAudioId) {
+        appendLocalAudioDownloadsOnly(links, item, hasMicTrack);
+      } else {
+        appendServerAudioDownloads(links, item, hasMicTrack);
+      }
 
       if (item.notesStatus === "completed") {
         const notesMd = document.createElement("button");

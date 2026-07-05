@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
+import { readFile } from "node:fs/promises";
 import { v4 as uuidv4 } from "uuid";
 import { COGNIUM_USER_ID_HEADER, OPENAI_API_KEY_HEADER, type RecordingMeta } from "@cognium/meet-shared";
 import {
@@ -56,6 +57,17 @@ interface AppDeps extends ProcessingDeps {
   userRegistry: UserStoreRegistry;
   apiToken?: string;
   defaultCaptureMode?: import("@cognium/meet-shared").AudioCaptureMode;
+}
+
+async function recordingMetaForClient(
+  store: RecordingStore,
+  meta: RecordingMeta,
+): Promise<RecordingMeta> {
+  return {
+    ...publicRecordingMeta(meta),
+    hasAudio: await store.audioExists(meta.id),
+    hasMicAudio: await store.micAudioExists(meta.id),
+  };
 }
 
 export function createApp(deps: AppDeps) {
@@ -506,11 +518,11 @@ export function createApp(deps: AppDeps) {
     if (isProcessingStale(meta)) {
       if (await store.audioExists(id)) {
         if (isTranscriptionActive(userId, id)) {
-          return c.json(publicRecordingMeta(meta));
+          return c.json(await recordingMetaForClient(store, meta));
         }
         enqueueTranscription(deps, userId, id);
         return c.json(
-          publicRecordingMeta({
+          await recordingMetaForClient(store, {
             ...meta,
             status: "processing",
             error: undefined,
@@ -529,14 +541,48 @@ export function createApp(deps: AppDeps) {
         processingStartedAt: undefined,
       };
       await store.saveMeta(failed);
-      return c.json(publicRecordingMeta(failed));
+      return c.json(await recordingMetaForClient(store, failed));
     }
 
     if (shouldGenerateMeetingNotes(meta) && !isNotesJobActive(userId, id)) {
       enqueueMeetingNotes(deps, userId, id);
     }
 
-    return c.json(publicRecordingMeta(meta));
+    return c.json(await recordingMetaForClient(store, meta));
+  });
+
+  app.get("/v1/recordings/:id/audio", async (c) => {
+    const store = c.get("store");
+    const id = c.req.param("id");
+    const meta = await store.getMeta(id);
+    if (!meta) {
+      return c.json({ error: "Not found" }, 404);
+    }
+    if (!(await store.audioExists(id))) {
+      return c.json({ error: "Audio not available" }, 404);
+    }
+    const data = await readFile(store.audioPath(id));
+    return c.body(data, 200, {
+      "Content-Type": "audio/webm",
+      "Content-Disposition": `attachment; filename="${id}.webm"`,
+    });
+  });
+
+  app.get("/v1/recordings/:id/mic-audio", async (c) => {
+    const store = c.get("store");
+    const id = c.req.param("id");
+    const meta = await store.getMeta(id);
+    if (!meta) {
+      return c.json({ error: "Not found" }, 404);
+    }
+    if (!(await store.micAudioExists(id))) {
+      return c.json({ error: "Mic audio not available" }, 404);
+    }
+    const data = await readFile(store.micAudioPath(id));
+    return c.body(data, 200, {
+      "Content-Type": "audio/webm",
+      "Content-Disposition": `attachment; filename="${id}.mic.webm"`,
+    });
   });
 
   app.get("/v1/recordings/:id/transcript.txt", async (c) => {
