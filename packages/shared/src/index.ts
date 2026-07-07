@@ -429,6 +429,18 @@ export function formatElapsedMmSs(seconds: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+/** Human-readable recording length from upload metadata (e.g. "5:32" or "1:05:00"). */
+export function formatRecordingDurationMs(durationMs?: number | null): string | undefined {
+  if (durationMs == null || !Number.isFinite(durationMs) || durationMs < 1000) {
+    return undefined;
+  }
+  const totalSeconds = Math.floor(durationMs / 1000);
+  if (totalSeconds >= 3600) {
+    return formatTimestamp(totalSeconds);
+  }
+  return formatElapsedMmSs(totalSeconds);
+}
+
 function formatAudioMinutes(seconds: number): string {
   const mins = Math.max(1, Math.round(seconds / 60));
   return `${mins} min`;

@@ -1180,6 +1180,7 @@ async function trackTranscription(id: string): Promise<void> {
           notesError: update.notesError,
           hasAudio: update.hasAudio,
           hasMicAudio: update.hasMicAudio,
+          durationMs: update.durationMs ?? undefined,
         });
       },
     });
@@ -1191,6 +1192,7 @@ async function trackTranscription(id: string): Promise<void> {
       notesError: meta.notesError,
       hasAudio: meta.hasAudio,
       hasMicAudio: meta.hasMicAudio,
+      durationMs: meta.durationMs,
     });
     if (meta.status === "completed" && meta.notesStatus !== "completed" && meta.notesStatus !== "failed" && meta.notesStatus !== "skipped") {
       void trackMeetingNotes(id);

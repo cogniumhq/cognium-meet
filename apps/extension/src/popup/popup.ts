@@ -1,6 +1,7 @@
 import type { MeetingAskCitation, MeetingAskMessage, RecordingMeta, TranscriptResult, TranscriptSegment, TranscriptionProgress } from "@cognium/meet-shared";
 import {
   formatTimestamp,
+  formatRecordingDurationMs,
   isTranscriptionProgressActive,
   mergeTranscriptionProgress,
   segmentsToPlainText,
@@ -1177,15 +1178,34 @@ function appendHistoryHead(
   li.appendChild(head);
 }
 
-function appendHistoryMeta(li: HTMLLIElement, item: { startedAt: string }): void {
+function appendHistoryMeta(
+  li: HTMLLIElement,
+  item: { startedAt: string; durationMs?: number },
+): void {
   const meta = document.createElement("div");
   meta.className = "history-meta";
 
   const date = document.createElement("span");
   date.className = "history-date";
   date.textContent = new Date(item.startedAt).toLocaleString();
-
   meta.appendChild(date);
+
+  const durationLabel = formatRecordingDurationMs(item.durationMs);
+  if (durationLabel) {
+    const sep = document.createElement("span");
+    sep.className = "history-meta-sep";
+    sep.textContent = "·";
+    sep.setAttribute("aria-hidden", "true");
+
+    const duration = document.createElement("span");
+    duration.className = "history-duration";
+    duration.textContent = durationLabel;
+    duration.title = "Recording duration";
+
+    meta.appendChild(sep);
+    meta.appendChild(duration);
+  }
+
   li.appendChild(meta);
 }
 
@@ -1200,11 +1220,14 @@ async function refreshStaleHistory(): Promise<void> {
       item.status === "completed" &&
       !item.localAudioId &&
       (item.hasAudio === undefined || item.deleteAudioAfterTranscription === false);
+    const needsDurationSync =
+      item.status === "completed" && !item.localAudioId && item.durationMs == null;
     if (
       item.status !== "processing" &&
       item.status !== "failed" &&
       !needsNotesPoll &&
-      !needsAudioSync
+      !needsAudioSync &&
+      !needsDurationSync
     ) {
       continue;
     }
@@ -1219,7 +1242,8 @@ async function refreshStaleHistory(): Promise<void> {
         meta.progress ||
         meta.notesStatus !== item.notesStatus ||
         meta.hasAudio !== item.hasAudio ||
-        meta.hasMicAudio !== item.hasMicAudio
+        meta.hasMicAudio !== item.hasMicAudio ||
+        meta.durationMs !== item.durationMs
       ) {
         await updateHistoryEntry(item.id, {
           status: meta.status,
@@ -1230,6 +1254,7 @@ async function refreshStaleHistory(): Promise<void> {
           hasAudio: meta.hasAudio,
           hasMicAudio: meta.hasMicAudio,
           deleteAudioAfterTranscription: meta.deleteAudioAfterTranscription,
+          durationMs: meta.durationMs ?? item.durationMs,
         });
       }
     } catch {
@@ -1490,16 +1515,20 @@ async function renderHistory(): Promise<void> {
     const li = document.createElement("li");
     li.className = "history-item";
     let hasMicTrack = false;
+    let durationMs = item.durationMs;
     if (item.localAudioId) {
       const pending = await loadPendingAudio(item.localAudioId);
       if (gen !== historyRenderGen) {
         return;
       }
       hasMicTrack = Boolean(pending?.micBytes?.length);
+      if (!durationMs && pending?.meta.durationMs) {
+        durationMs = pending.meta.durationMs;
+      }
     }
 
     appendHistoryHead(li, item);
-    appendHistoryMeta(li, item);
+    appendHistoryMeta(li, { ...item, durationMs });
 
     if (item.status === "upload_failed" && item.localAudioId) {
       if (item.error) {

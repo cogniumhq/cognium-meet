@@ -364,6 +364,10 @@ button:disabled {
 }
 
 .history-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
   margin-bottom: 10px;
   padding-bottom: 8px;
   border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 80%, transparent);
@@ -372,6 +376,20 @@ button:disabled {
 .history-date {
   color: var(--text-dim);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-meta-sep {
+  color: var(--text-dim);
+  opacity: 0.45;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.history-duration {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
