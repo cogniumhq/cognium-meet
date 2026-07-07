@@ -11,47 +11,85 @@
     <main class="container">
       <div id="main-view">
         <header class="app-header">
-          <h1>Cognium Meet</h1>
-          <p class="subtitle">Record &amp; transcribe the active tab</p>
+          <div class="app-header-row">
+            <div>
+              <h1>Cognium Meet</h1>
+              <p class="subtitle">Record &amp; transcribe the active tab</p>
+            </div>
+            <button
+              id="settings-open-btn"
+              type="button"
+              class="icon-btn settings-btn"
+              title="Settings"
+              aria-label="Settings"
+            >
+              ⚙
+            </button>
+          </div>
         </header>
 
-        <section id="status-section" class="status-card">
-          <div id="recording-indicator" class="hidden">
-            <span class="dot"></span>
-            <span id="timer">00:00</span>
-          </div>
-          <p id="status-text">Ready</p>
-          <div id="transcription-progress" class="transcription-progress hidden">
-            <p id="progress-label" class="progress-label">Transcribing…</p>
-            <div
-              id="progress-track"
-              class="progress-track"
-              role="progressbar"
-              aria-valuemin="0"
-              aria-valuemax="100"
-              aria-valuenow="0"
-            >
-              <div id="progress-fill" class="progress-fill"></div>
+        <section id="record-panel" class="record-panel">
+          <div id="status-section" class="status-card">
+            <div id="recording-indicator" class="recording-indicator hidden">
+              <span class="dot" aria-hidden="true"></span>
+              <span class="recording-label">Recording</span>
+              <span id="timer" class="recording-timer">00:00</span>
             </div>
-            <p id="progress-percent" class="progress-percent">0%</p>
+            <p id="status-text" class="status-message">Ready to record</p>
+            <div id="transcription-progress" class="transcription-progress hidden">
+              <p id="progress-label" class="progress-label">Transcribing…</p>
+              <div
+                id="progress-track"
+                class="progress-track"
+                role="progressbar"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow="0"
+              >
+                <div id="progress-fill" class="progress-fill"></div>
+              </div>
+              <p id="progress-percent" class="progress-percent">0%</p>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button id="start-btn" type="button" class="btn-record">
+              <span class="btn-record-icon" aria-hidden="true">●</span>
+              Start recording
+            </button>
+            <div id="recording-actions" class="recording-actions hidden">
+              <button id="stop-only-btn" type="button" class="secondary">
+                Stop
+              </button>
+              <button id="stop-btn" type="button" class="danger">
+                Stop &amp; transcribe
+              </button>
+            </div>
           </div>
         </section>
 
-        <div class="actions">
-          <button id="start-btn" type="button">Start recording</button>
-          <button id="stop-only-btn" type="button" class="hidden secondary">
-            Stop recording
-          </button>
-          <button id="stop-btn" type="button" class="hidden danger">Stop &amp; transcribe</button>
-        </div>
-
         <section id="history-section" class="history-panel">
-          <div class="history-header">
+          <div class="section-heading">
             <h2>Recent transcripts</h2>
-            <button id="settings-open-btn" type="button" class="text-link settings-btn">Settings</button>
           </div>
           <ul id="history-list" class="history-scroll"></ul>
-          <div id="meeting-ask-wrap" class="meeting-ask-wrap">
+
+          <section id="meeting-ask-section" class="meeting-ask-section">
+            <button
+              id="meeting-ask-toggle"
+              type="button"
+              class="meeting-ask-toggle"
+              aria-expanded="false"
+              aria-controls="meeting-ask-body"
+            >
+              <span class="meeting-ask-summary-text">
+                <span class="meeting-ask-summary-title">Ask</span>
+                <span class="meeting-ask-summary-hint">Chat with your meeting transcripts</span>
+              </span>
+              <span class="meeting-ask-chevron" aria-hidden="true">▸</span>
+            </button>
+            <div id="meeting-ask-body" class="meeting-ask-body collapsed">
+            <div id="meeting-ask-wrap" class="meeting-ask-wrap">
             <div class="meeting-ask-tabbar">
               <div id="meeting-ask-tabs" class="meeting-ask-tabs" role="tablist"></div>
               <button
@@ -104,7 +142,9 @@
                 Cancel
               </button>
             </div>
-          </div>
+            </div>
+            </div>
+          </section>
         </section>
       </div>
 

@@ -46,11 +46,16 @@ import { initSettingsForm } from "../lib/settings-form.js";
 const startBtn = document.getElementById("start-btn") as HTMLButtonElement;
 const stopOnlyBtn = document.getElementById("stop-only-btn") as HTMLButtonElement;
 const stopBtn = document.getElementById("stop-btn") as HTMLButtonElement;
+const recordingActions = document.getElementById("recording-actions") as HTMLDivElement;
+const statusSection = document.getElementById("status-section") as HTMLDivElement;
 const statusText = document.getElementById("status-text") as HTMLParagraphElement;
 const recordingIndicator = document.getElementById("recording-indicator") as HTMLDivElement;
 const timerEl = document.getElementById("timer") as HTMLSpanElement;
 const historyList = document.getElementById("history-list") as HTMLUListElement;
 const meetingAskWrap = document.getElementById("meeting-ask-wrap") as HTMLDivElement;
+const meetingAskSection = document.getElementById("meeting-ask-section") as HTMLElement;
+const meetingAskToggle = document.getElementById("meeting-ask-toggle") as HTMLButtonElement;
+const meetingAskBody = document.getElementById("meeting-ask-body") as HTMLDivElement;
 const meetingAsk = document.getElementById("meeting-ask") as HTMLTextAreaElement;
 const meetingAskLabel = document.getElementById("meeting-ask-label") as HTMLLabelElement;
 const meetingAskBtn = document.getElementById("meeting-ask-btn") as HTMLButtonElement;
@@ -98,6 +103,7 @@ let askScopeMeetingTitle: string | undefined;
 let askMessages: MeetingAskMessage[] = [];
 let askChatSaveTimer: number | undefined;
 let askLoading = false;
+let askSectionOpen = false;
 
 void init();
 
@@ -126,7 +132,11 @@ async function init(): Promise<void> {
   transcriptCopyBtn.addEventListener("click", () => void copyTranscript());
   meetingAskBtn.addEventListener("click", () => void runMeetingAsk());
   meetingAskCancelBtn.addEventListener("click", () => void cancelMeetingAsk());
-  meetingAskNewTab.addEventListener("click", () => void createNewAskTab());
+  meetingAskToggle.addEventListener("click", () => setAskSectionOpen(!askSectionOpen));
+  meetingAskNewTab.addEventListener("click", (event) => {
+    event.stopPropagation();
+    void createNewAskTab();
+  });
   meetingAskClearScope.addEventListener("click", () => void setAskScope());
   meetingAskClearChat.addEventListener("click", () => void clearAskChatUi());
   meetingAsk.addEventListener("input", () => scheduleSaveAskChat());
@@ -397,7 +407,27 @@ function showMainView(): void {
 
 async function applyMeetingAskVisibility(): Promise<void> {
   const settings = await getSettings();
-  meetingAskWrap.classList.toggle("hidden", !isMeetingAskEnabled(settings));
+  const enabled = isMeetingAskEnabled(settings);
+  meetingAskSection.classList.toggle("hidden", !enabled);
+  if (!enabled) {
+    return;
+  }
+  syncAskSectionOpen();
+}
+
+function setAskSectionOpen(open: boolean): void {
+  askSectionOpen = open;
+  meetingAskBody.classList.toggle("collapsed", !open);
+  meetingAskSection.classList.toggle("meeting-ask-section--open", open);
+  meetingAskToggle.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function syncAskSectionOpen(): void {
+  const hasActivity =
+    askMessages.length > 0 || askLoading || Boolean(askScopeRecordingId) || meetingAsk.value.trim();
+  if (hasActivity) {
+    setAskSectionOpen(true);
+  }
 }
 
 function updateAskScopeChrome(): void {
@@ -458,7 +488,10 @@ function renderAskTabs(workspace: AskChatWorkspace): void {
       btn.appendChild(close);
     }
 
-    btn.addEventListener("click", () => void switchAskTab(tab.id));
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      void switchAskTab(tab.id);
+    });
     meetingAskTabs.appendChild(btn);
   }
 
@@ -495,6 +528,7 @@ async function createNewAskTab(opts?: {
   scopeRecordingId?: string;
   scopeMeetingTitle?: string;
 }): Promise<void> {
+  setAskSectionOpen(true);
   await persistActiveTab(askLoading);
   let workspace = await loadAskWorkspace();
   if (workspace.tabs.length >= MAX_ASK_TABS) {
@@ -508,6 +542,7 @@ async function createNewAskTab(opts?: {
 }
 
 async function openAskForRecording(item: StoredRecording): Promise<void> {
+  setAskSectionOpen(true);
   await persistActiveTab(askLoading);
   const workspace = await loadAskWorkspace();
   const existing = workspace.tabs.find((tab) => tab.scopeRecordingId === item.id);
@@ -568,6 +603,7 @@ function updateAskChrome(): void {
   meetingAskBtn.classList.toggle("hidden", anyPending);
   meetingAskCancelBtn.classList.toggle("hidden", !anyPending);
   meetingAsk.disabled = anyPending;
+  syncAskSectionOpen();
 }
 
 function scheduleSaveAskChat(): void {
@@ -1020,8 +1056,8 @@ async function stopRecording(transcribe: boolean): Promise<void> {
 function enterRecordingUi(startedAt: number): void {
   recordingStartedAt = startedAt;
   startBtn.classList.add("hidden");
-  stopOnlyBtn.classList.remove("hidden");
-  stopBtn.classList.remove("hidden");
+  recordingActions.classList.remove("hidden");
+  statusSection.classList.add("status-card--recording");
   stopOnlyBtn.disabled = false;
   stopBtn.disabled = false;
   recordingIndicator.classList.remove("hidden");
@@ -1034,8 +1070,8 @@ function enterRecordingUi(startedAt: number): void {
 
 function exitRecordingUi(): void {
   startBtn.classList.remove("hidden");
-  stopOnlyBtn.classList.add("hidden");
-  stopBtn.classList.add("hidden");
+  recordingActions.classList.add("hidden");
+  statusSection.classList.remove("status-card--recording");
   recordingIndicator.classList.add("hidden");
   if (timerInterval) {
     clearInterval(timerInterval);
@@ -1083,7 +1119,65 @@ function createStatusBadge(status: string): HTMLSpanElement {
   return badge;
 }
 
-function appendHistoryMeta(li: HTMLLIElement, item: { startedAt: string; status: string }): void {
+function createChipBtn(
+  label: string,
+  onClick: () => void,
+  variant: "accent" | "default" | "ghost" | "danger" = "ghost",
+): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  const classes = ["btn-chip"];
+  if (variant === "ghost") {
+    classes.push("btn-chip--ghost");
+  } else if (variant === "accent") {
+    classes.push("btn-chip--accent");
+  } else if (variant === "danger") {
+    classes.push("btn-chip--danger");
+  }
+  btn.className = classes.join(" ");
+  btn.textContent = label;
+  btn.addEventListener("click", onClick);
+  return btn;
+}
+
+function createHistoryActions(): {
+  root: HTMLDivElement;
+  primary: HTMLDivElement;
+  export: HTMLDivElement;
+  footer: HTMLDivElement;
+} {
+  const root = document.createElement("div");
+  root.className = "history-actions";
+  const primary = document.createElement("div");
+  primary.className = "history-actions-primary";
+  const secondary = document.createElement("div");
+  secondary.className = "history-actions-secondary";
+  const exportRow = document.createElement("div");
+  exportRow.className = "history-actions-export";
+  const footer = document.createElement("div");
+  footer.className = "history-actions-footer";
+  secondary.append(exportRow, footer);
+  root.append(primary, secondary);
+  return { root, primary, export: exportRow, footer };
+}
+
+function appendHistoryHead(
+  li: HTMLLIElement,
+  item: { meetingTitle?: string; status: string },
+): void {
+  const head = document.createElement("div");
+  head.className = "history-item-head";
+
+  const title = document.createElement("div");
+  title.className = "history-title";
+  title.textContent = item.meetingTitle ?? "Recording";
+
+  head.appendChild(title);
+  head.appendChild(createStatusBadge(item.status));
+  li.appendChild(head);
+}
+
+function appendHistoryMeta(li: HTMLLIElement, item: { startedAt: string }): void {
   const meta = document.createElement("div");
   meta.className = "history-meta";
 
@@ -1092,7 +1186,6 @@ function appendHistoryMeta(li: HTMLLIElement, item: { startedAt: string; status:
   date.textContent = new Date(item.startedAt).toLocaleString();
 
   meta.appendChild(date);
-  meta.appendChild(createStatusBadge(item.status));
   li.appendChild(meta);
 }
 
@@ -1252,7 +1345,7 @@ function recordingFilenameBase(meetingTitle?: string): string {
 }
 
 function appendServerAudioDownloads(
-  links: HTMLDivElement,
+  exportRow: HTMLDivElement,
   item: StoredRecording,
   hasMicTrack: boolean,
 ): void {
@@ -1264,34 +1357,33 @@ function appendServerAudioDownloads(
 
   const base = recordingFilenameBase(item.meetingTitle);
   if (showTab) {
-    const downloadTab = document.createElement("button");
-    downloadTab.type = "button";
-    downloadTab.className = "link-btn";
-    downloadTab.textContent = showMic ? "Download tab" : "Download audio";
-    downloadTab.addEventListener("click", () => {
-      void downloadRecordingAudio(item.id, "tab", showMic ? `${base}-tab.webm` : `${base}.webm`).catch(
-        (err) => setStatus(err instanceof Error ? err.message : String(err), true),
-      );
-    });
-    links.appendChild(downloadTab);
+    exportRow.appendChild(
+      createChipBtn(
+        showMic ? "Tab audio" : "Audio",
+        () => {
+          void downloadRecordingAudio(
+            item.id,
+            "tab",
+            showMic ? `${base}-tab.webm` : `${base}.webm`,
+          ).catch((err) => setStatus(err instanceof Error ? err.message : String(err), true));
+        },
+      ),
+    );
   }
 
   if (showMic) {
-    const downloadMic = document.createElement("button");
-    downloadMic.type = "button";
-    downloadMic.className = "link-btn";
-    downloadMic.textContent = "Download mic";
-    downloadMic.addEventListener("click", () => {
-      void downloadRecordingAudio(item.id, "mic", `${base}-mic.webm`).catch((err) =>
-        setStatus(err instanceof Error ? err.message : String(err), true),
-      );
-    });
-    links.appendChild(downloadMic);
+    exportRow.appendChild(
+      createChipBtn("Mic audio", () => {
+        void downloadRecordingAudio(item.id, "mic", `${base}-mic.webm`).catch((err) =>
+          setStatus(err instanceof Error ? err.message : String(err), true),
+        );
+      }),
+    );
   }
 }
 
 function appendLocalAudioDownloadsOnly(
-  links: HTMLDivElement,
+  exportRow: HTMLDivElement,
   item: { localAudioId?: string; meetingTitle?: string },
   hasMicTrack: boolean,
 ): void {
@@ -1300,30 +1392,24 @@ function appendLocalAudioDownloadsOnly(
   }
 
   const base = recordingFilenameBase(item.meetingTitle);
-  const downloadTab = document.createElement("button");
-  downloadTab.type = "button";
-  downloadTab.className = "link-btn";
-  downloadTab.textContent = hasMicTrack ? "Download tab" : "Download audio";
-  downloadTab.addEventListener("click", () => {
-    void downloadPendingAudio(
-      item.localAudioId!,
-      hasMicTrack ? `${base}-tab.webm` : `${base}.webm`,
-      "tab",
-    ).catch((err) => setStatus(err instanceof Error ? err.message : String(err), true));
-  });
-  links.appendChild(downloadTab);
+  exportRow.appendChild(
+    createChipBtn(hasMicTrack ? "Tab audio" : "Audio", () => {
+      void downloadPendingAudio(
+        item.localAudioId!,
+        hasMicTrack ? `${base}-tab.webm` : `${base}.webm`,
+        "tab",
+      ).catch((err) => setStatus(err instanceof Error ? err.message : String(err), true));
+    }),
+  );
 
   if (hasMicTrack) {
-    const downloadMic = document.createElement("button");
-    downloadMic.type = "button";
-    downloadMic.className = "link-btn";
-    downloadMic.textContent = "Download mic";
-    downloadMic.addEventListener("click", () => {
-      void downloadPendingAudio(item.localAudioId!, `${base}-mic.webm`, "mic").catch((err) =>
-        setStatus(err instanceof Error ? err.message : String(err), true),
-      );
-    });
-    links.appendChild(downloadMic);
+    exportRow.appendChild(
+      createChipBtn("Mic audio", () => {
+        void downloadPendingAudio(item.localAudioId!, `${base}-mic.webm`, "mic").catch((err) =>
+          setStatus(err instanceof Error ? err.message : String(err), true),
+        );
+      }),
+    );
   }
 }
 
@@ -1337,60 +1423,46 @@ function appendLocalAudioActions(
     return;
   }
 
-  const links = document.createElement("div");
-  links.className = "history-links";
+  const { root, primary, export: exportRow, footer } = createHistoryActions();
 
-  const upload = document.createElement("button");
-  upload.type = "button";
-  upload.className = "link-btn";
-  upload.textContent = uploadLabel;
-  upload.addEventListener("click", () => {
-    void retryUpload(item.localAudioId!);
-  });
-  links.appendChild(upload);
+  primary.appendChild(
+    createChipBtn(uploadLabel, () => void retryUpload(item.localAudioId!), "accent"),
+  );
+  appendLocalAudioDownloadsOnly(exportRow, item, hasMicTrack);
 
-  appendLocalAudioDownloadsOnly(links, item, hasMicTrack);
+  footer.appendChild(
+    createChipBtn("Delete local", () => void deleteLocalRecording(item), "danger"),
+  );
 
-  const del = document.createElement("button");
-  del.type = "button";
-  del.className = "link-btn link-btn--danger";
-  del.textContent = "Delete local";
-  del.addEventListener("click", () => {
-    void deleteLocalRecording(item);
-  });
-  links.appendChild(del);
-
-  li.appendChild(links);
+  li.appendChild(root);
 }
 
 function appendRemoveAction(
   li: HTMLLIElement,
   item: { id: string; meetingTitle?: string; status: string; localAudioId?: string },
-  links?: HTMLDivElement,
+  footer?: HTMLDivElement,
 ): void {
-  const container =
-    links ??
-    (() => {
-      const el = document.createElement("div");
-      el.className = "history-links";
-      li.appendChild(el);
-      return el;
-    })();
-
   const onServer =
     !item.localAudioId &&
     (item.status === "completed" ||
       item.status === "failed" ||
       item.status === "processing");
 
-  const remove = document.createElement("button");
-  remove.type = "button";
-  remove.className = "link-btn link-btn--danger";
-  remove.textContent = onServer ? "Delete" : "Remove";
-  remove.addEventListener("click", () => {
-    void removeFromHistory(item);
-  });
+  const remove = createChipBtn(
+    onServer ? "Delete" : "Remove",
+    () => void removeFromHistory(item),
+    "danger",
+  );
+
+  if (footer) {
+    footer.appendChild(remove);
+    return;
+  }
+
+  const container = document.createElement("div");
+  container.className = "history-actions-footer";
   container.appendChild(remove);
+  li.appendChild(container);
 }
 
 async function renderHistory(): Promise<void> {
@@ -1404,13 +1476,19 @@ async function renderHistory(): Promise<void> {
   if (history.length === 0) {
     const li = document.createElement("li");
     li.className = "history-empty";
-    li.textContent = "No transcripts yet — start a recording above.";
+    const title = document.createElement("span");
+    title.className = "history-empty-title";
+    title.textContent = "No transcripts yet";
+    const hint = document.createElement("span");
+    hint.textContent = "Start a recording above to capture and transcribe a meeting.";
+    li.append(title, hint);
     historyList.appendChild(li);
     return;
   }
 
   for (const item of history) {
     const li = document.createElement("li");
+    li.className = "history-item";
     let hasMicTrack = false;
     if (item.localAudioId) {
       const pending = await loadPendingAudio(item.localAudioId);
@@ -1420,11 +1498,7 @@ async function renderHistory(): Promise<void> {
       hasMicTrack = Boolean(pending?.micBytes?.length);
     }
 
-    const title = document.createElement("div");
-    title.className = "history-title";
-    title.textContent = item.meetingTitle ?? "Recording";
-
-    li.appendChild(title);
+    appendHistoryHead(li, item);
     appendHistoryMeta(li, item);
 
     if (item.status === "upload_failed" && item.localAudioId) {
@@ -1449,83 +1523,53 @@ async function renderHistory(): Promise<void> {
         li.appendChild(err);
       }
 
-      const links = document.createElement("div");
-      links.className = "history-links";
-
-      const retry = document.createElement("button");
-      retry.type = "button";
-      retry.className = "link-btn";
-      retry.textContent = "Retry transcription";
-      retry.addEventListener("click", () => {
-        void retryTranscription(item.id);
-      });
-      links.appendChild(retry);
-      li.appendChild(links);
-      appendRemoveAction(li, item, links);
+      const { root, primary, footer } = createHistoryActions();
+      primary.appendChild(
+        createChipBtn("Retry transcription", () => void retryTranscription(item.id), "accent"),
+      );
+      appendRemoveAction(li, item, footer);
+      li.appendChild(root);
     }
 
     if (item.status === "completed") {
-      const links = document.createElement("div");
-      links.className = "history-links";
+      const { root, primary, export: exportRow, footer } = createHistoryActions();
 
-      const view = document.createElement("button");
-      view.type = "button";
-      view.className = "link-btn";
-      view.textContent = "View";
-      view.addEventListener("click", () => {
-        void openTranscriptViewer(item);
-      });
-      links.appendChild(view);
+      primary.appendChild(
+        createChipBtn("View transcript", () => void openTranscriptViewer(item), "accent"),
+      );
+      primary.appendChild(
+        createChipBtn("Ask", () => void openAskForRecording(item), "ghost"),
+      );
 
-      const ask = document.createElement("button");
-      ask.type = "button";
-      ask.className = "link-btn";
-      ask.textContent = "Ask";
-      ask.addEventListener("click", () => {
-        void openAskForRecording(item);
-      });
-      links.appendChild(ask);
-
-      const txt = document.createElement("button");
-      txt.type = "button";
-      txt.className = "link-btn";
-      txt.textContent = "Download TXT";
-      txt.addEventListener("click", () => {
-        void downloadTranscript(item.id, "txt").catch((err) =>
-          setStatus(err instanceof Error ? err.message : String(err), true),
-        );
-      });
-
-      const json = document.createElement("button");
-      json.type = "button";
-      json.className = "link-btn";
-      json.textContent = "Download JSON";
-      json.addEventListener("click", () => {
-        void downloadTranscript(item.id, "json").catch((err) =>
-          setStatus(err instanceof Error ? err.message : String(err), true),
-        );
-      });
-
-      links.appendChild(txt);
-      links.appendChild(json);
+      exportRow.appendChild(
+        createChipBtn("TXT", () => {
+          void downloadTranscript(item.id, "txt").catch((err) =>
+            setStatus(err instanceof Error ? err.message : String(err), true),
+          );
+        }),
+      );
+      exportRow.appendChild(
+        createChipBtn("JSON", () => {
+          void downloadTranscript(item.id, "json").catch((err) =>
+            setStatus(err instanceof Error ? err.message : String(err), true),
+          );
+        }),
+      );
 
       if (item.localAudioId) {
-        appendLocalAudioDownloadsOnly(links, item, hasMicTrack);
+        appendLocalAudioDownloadsOnly(exportRow, item, hasMicTrack);
       } else {
-        appendServerAudioDownloads(links, item, hasMicTrack);
+        appendServerAudioDownloads(exportRow, item, hasMicTrack);
       }
 
       if (item.notesStatus === "completed") {
-        const notesMd = document.createElement("button");
-        notesMd.type = "button";
-        notesMd.className = "link-btn";
-        notesMd.textContent = "Meeting notes";
-        notesMd.addEventListener("click", () => {
-          void downloadMeetingNotes(item.id, "md").catch((err) =>
-            setStatus(err instanceof Error ? err.message : String(err), true),
-          );
-        });
-        links.appendChild(notesMd);
+        exportRow.appendChild(
+          createChipBtn("Notes", () => {
+            void downloadMeetingNotes(item.id, "md").catch((err) =>
+              setStatus(err instanceof Error ? err.message : String(err), true),
+            );
+          }),
+        );
       } else if (
         item.notesStatus === "pending" ||
         item.notesStatus === "processing"
@@ -1533,11 +1577,11 @@ async function renderHistory(): Promise<void> {
         const pending = document.createElement("span");
         pending.className = "history-notes-pending";
         pending.textContent = "Generating notes…";
-        links.appendChild(pending);
+        exportRow.appendChild(pending);
       }
 
-      li.appendChild(links);
-      appendRemoveAction(li, item, links);
+      appendRemoveAction(li, item, footer);
+      li.appendChild(root);
     }
 
     if (item.status === "processing") {
@@ -1545,7 +1589,9 @@ async function renderHistory(): Promise<void> {
       if (progressBar) {
         li.appendChild(progressBar);
       }
-      appendRemoveAction(li, item);
+      const { root, footer } = createHistoryActions();
+      appendRemoveAction(li, item, footer);
+      li.appendChild(root);
     }
 
     if (gen !== historyRenderGen) {
