@@ -429,16 +429,23 @@ export function formatElapsedMmSs(seconds: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-/** Human-readable recording length from upload metadata (e.g. "5:32" or "1:05:00"). */
+/** Recording timer / card duration: MM:SS below 1 hour, H:MM:SS at 1 hour+. */
+export function formatRecordingElapsedSeconds(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds));
+  if (total >= 3600) {
+    return formatTimestamp(total);
+  }
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+/** Human-readable recording length from upload metadata (e.g. "05:32" or "01:05:00"). */
 export function formatRecordingDurationMs(durationMs?: number | null): string | undefined {
   if (durationMs == null || !Number.isFinite(durationMs) || durationMs < 1000) {
     return undefined;
   }
-  const totalSeconds = Math.floor(durationMs / 1000);
-  if (totalSeconds >= 3600) {
-    return formatTimestamp(totalSeconds);
-  }
-  return formatElapsedMmSs(totalSeconds);
+  return formatRecordingElapsedSeconds(Math.floor(durationMs / 1000));
 }
 
 function formatAudioMinutes(seconds: number): string {

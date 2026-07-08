@@ -1,7 +1,8 @@
 import type { MeetingAskCitation, MeetingAskMessage, RecordingMeta, TranscriptResult, TranscriptSegment, TranscriptionProgress } from "@cognium/meet-shared";
 import {
-  formatTimestamp,
   formatRecordingDurationMs,
+  formatRecordingElapsedSeconds,
+  formatTimestamp,
   isTranscriptionProgressActive,
   mergeTranscriptionProgress,
   segmentsToPlainText,
@@ -1085,9 +1086,7 @@ function updateTimer(): void {
     return;
   }
   const elapsed = Math.floor((Date.now() - recordingStartedAt) / 1000);
-  const m = Math.floor(elapsed / 60);
-  const s = elapsed % 60;
-  timerEl.textContent = `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  timerEl.textContent = formatRecordingElapsedSeconds(elapsed);
 }
 
 function setStatus(text: string, isError = false): void {
