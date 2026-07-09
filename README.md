@@ -130,7 +130,7 @@ remote participants (and a solo test will be mostly silent without mic).
 | `GET` | `/v1/recordings/:id/transcript.json` | JSON with segments |
 | `GET` | `/v1/recordings/:id/notes.json` | AI meeting notes (JSON) |
 | `GET` | `/v1/recordings/:id/notes.md` | AI meeting notes (Markdown) |
-| `POST` | `/v1/recordings/:id/notes` | Regenerate meeting notes |
+| `POST` | `/v1/recordings/:id/notes` | Regenerate meeting notes (optional `meetingLlmModel`, `meetingLlmProvider`) |
 | `POST` | `/v1/ask` | Ask about meetings (`{ messages, recordingId?, llmProvider?, meetingLlmModel? }`) |
 
 Auth: `Authorization: Bearer <API_TOKEN>` when `API_TOKEN` is set.

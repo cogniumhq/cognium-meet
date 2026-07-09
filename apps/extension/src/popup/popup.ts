@@ -1,4 +1,12 @@
-import type { MeetingAskCitation, MeetingAskMessage, RecordingMeta, TranscriptResult, TranscriptSegment, TranscriptionProgress } from "@cognium/meet-shared";
+import type {
+  ExtensionSettings,
+  MeetingAskCitation,
+  MeetingAskMessage,
+  RecordingMeta,
+  TranscriptResult,
+  TranscriptSegment,
+  TranscriptionProgress,
+} from "@cognium/meet-shared";
 import {
   formatRecordingDurationMs,
   formatRecordingElapsedSeconds,
@@ -8,6 +16,11 @@ import {
   segmentsToPlainText,
   transcriptionProgressLabel,
   transcriptionProgressPercent,
+  DEFAULT_MEETING_LLM_PROVIDER,
+  coerceMeetingLlmModelForProvider,
+  meetingLlmModelLabel,
+  meetingLlmModelsForProvider,
+  type MeetingLlmProvider,
 } from "@cognium/meet-shared";
 import {
   deleteServerRecording,
@@ -17,6 +30,7 @@ import {
   fetchRecordings,
   fetchRecordingStatus,
   fetchTranscript,
+  regenerateMeetingNotes,
   retryRecording,
 } from "../lib/upload.js";
 import { deletePendingAudio, downloadPendingAudio, loadPendingAudio } from "../lib/pending-audio-store.js";
@@ -1325,6 +1339,89 @@ async function retryTranscription(id: string): Promise<void> {
   }
 }
 
+async function regenerateNotes(
+  id: string,
+  settings: ExtensionSettings,
+  modelSelect: HTMLSelectElement,
+): Promise<void> {
+  const provider = (settings.meetingLlmProvider ?? DEFAULT_MEETING_LLM_PROVIDER) as MeetingLlmProvider;
+  const meetingLlmModel = coerceMeetingLlmModelForProvider(
+    provider,
+    modelSelect.value || settings.meetingLlmModel,
+  );
+  setStatus(`Regenerating notes with ${meetingLlmModelLabel(meetingLlmModel)}…`);
+  try {
+    await regenerateMeetingNotes(id, {
+      meetingLlmProvider: provider,
+      meetingLlmModel,
+      ollamaUrl: settings.ollamaUrl,
+      ollamaModel: provider === "ollama" ? meetingLlmModel : settings.ollamaModel,
+    });
+    await updateHistoryEntry(id, {
+      notesStatus: "pending",
+      notesError: undefined,
+    });
+    await renderHistory();
+    void chrome.runtime.sendMessage({ type: "TRACK_MEETING_NOTES", recordingId: id });
+    setStatus("Generating notes… — safe to close this popup");
+  } catch (err) {
+    setStatus(err instanceof Error ? err.message : String(err), true);
+  }
+}
+
+function createNotesModelSelect(settings: ExtensionSettings): HTMLSelectElement {
+  const provider = (settings.meetingLlmProvider ?? DEFAULT_MEETING_LLM_PROVIDER) as MeetingLlmProvider;
+  const models = meetingLlmModelsForProvider(provider);
+  const effective = coerceMeetingLlmModelForProvider(provider, settings.meetingLlmModel);
+  const select = document.createElement("select");
+  select.className = "history-notes-model";
+  select.title = "Model for notes regeneration";
+  for (const model of models) {
+    const option = document.createElement("option");
+    option.value = model;
+    option.textContent = meetingLlmModelLabel(model);
+    select.appendChild(option);
+  }
+  select.value = effective;
+  return select;
+}
+
+function appendNotesRegenerateControls(
+  parent: HTMLElement,
+  item: { id: string; notesStatus?: string; notesError?: string },
+  settings: ExtensionSettings,
+): void {
+  if (item.notesStatus === "pending" || item.notesStatus === "processing") {
+    const pending = document.createElement("span");
+    pending.className = "history-notes-pending";
+    pending.textContent = "Generating notes…";
+    parent.appendChild(pending);
+    return;
+  }
+
+  if (item.notesStatus === "failed" && item.notesError) {
+    const err = document.createElement("div");
+    err.className = "history-error";
+    err.textContent = item.notesError;
+    parent.appendChild(err);
+  }
+
+  if (item.notesStatus !== "pending" && item.notesStatus !== "processing") {
+    const row = document.createElement("div");
+    row.className = "history-notes-regenerate";
+    const select = createNotesModelSelect(settings);
+    row.appendChild(select);
+    row.appendChild(
+      createChipBtn(
+        "Regenerate notes",
+        () => void regenerateNotes(item.id, settings, select),
+        "accent",
+      ),
+    );
+    parent.appendChild(row);
+  }
+}
+
 async function retryUpload(localAudioId: string): Promise<void> {
   setStatus("Retrying upload…");
   try {
@@ -1537,7 +1634,7 @@ function appendRemoveAction(
 
 async function renderHistory(): Promise<void> {
   const gen = ++historyRenderGen;
-  const history = await getHistory();
+  const [history, settings] = await Promise.all([getHistory(), getSettings()]);
   if (gen !== historyRenderGen) {
     return;
   }
@@ -1644,15 +1741,9 @@ async function renderHistory(): Promise<void> {
             );
           }),
         );
-      } else if (
-        item.notesStatus === "pending" ||
-        item.notesStatus === "processing"
-      ) {
-        const pending = document.createElement("span");
-        pending.className = "history-notes-pending";
-        pending.textContent = "Generating notes…";
-        exportRow.appendChild(pending);
       }
+
+      appendNotesRegenerateControls(exportRow, item, settings);
 
       appendRemoveAction(li, item, footer);
       li.appendChild(root);

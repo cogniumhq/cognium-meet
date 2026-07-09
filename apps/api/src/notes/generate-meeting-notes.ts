@@ -4,9 +4,10 @@ import type {
   MeetingNotes,
   TranscriptResult,
 } from "@cognium/meet-shared";
-import { segmentsToPlainText } from "@cognium/meet-shared";
+import { segmentsToPlainText, openAiMeetingModelUsesResponsesApi } from "@cognium/meet-shared";
 import type { MeetingLlmConfig } from "../llm/create-meeting-llm.js";
 import { createMeetingLlm, resolveMeetingLlmModel } from "../llm/create-meeting-llm.js";
+import { generateMeetingNotesWithOpenAiReasoning } from "./generate-meeting-notes-openai-reasoning.js";
 
 const MAX_TRANSCRIPT_CHARS = 90_000;
 
@@ -26,8 +27,23 @@ export async function generateMeetingNotes(opts: {
   meetingTitle?: string;
   transcript: TranscriptResult;
 }): Promise<MeetingNotes> {
-  const llm = createMeetingLlm(opts.llmConfig, opts.llmProvider);
   const model = resolveMeetingLlmModel(opts.llmConfig, opts.model, opts.llmProvider);
+  const provider = opts.llmProvider ?? opts.llmConfig.provider;
+
+  if (provider === "openai" && openAiMeetingModelUsesResponsesApi(model)) {
+    if (!opts.llmConfig.openaiApiKey.trim()) {
+      throw new Error("OpenAI API key is missing");
+    }
+    return generateMeetingNotesWithOpenAiReasoning({
+      apiKey: opts.llmConfig.openaiApiKey,
+      model,
+      recordingId: opts.recordingId,
+      meetingTitle: opts.meetingTitle,
+      transcript: opts.transcript,
+    });
+  }
+
+  const llm = createMeetingLlm(opts.llmConfig, opts.llmProvider, opts.model);
 
   let text = segmentsToPlainText(opts.transcript.segments);
   if (text.length > MAX_TRANSCRIPT_CHARS) {
@@ -42,13 +58,16 @@ export async function generateMeetingNotes(opts: {
       meetingTitle: opts.meetingTitle?.trim() || "Meeting",
       transcript: text,
     },
-    { model },
+    {
+      model,
+    },
   );
 
   return {
     recordingId: opts.recordingId,
     meetingTitle: opts.meetingTitle,
     generatedAt: new Date().toISOString(),
+    llmModel: model,
     summary: result.summary?.trim() || "No summary generated.",
     actionItems: normalizeList(result.actionItems),
     decisions: normalizeList(result.decisions),

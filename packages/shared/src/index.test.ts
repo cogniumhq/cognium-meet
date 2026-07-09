@@ -217,6 +217,16 @@ describe("segmentsToPlainText", () => {
   });
 });
 
+describe("openAiMeetingModelUsesResponsesApi", () => {
+  it("routes GPT-5.5 and reasoning models to the Responses API", async () => {
+    const { openAiMeetingModelUsesResponsesApi } = await import("./index.js");
+    expect(openAiMeetingModelUsesResponsesApi("gpt-5.5")).toBe(true);
+    expect(openAiMeetingModelUsesResponsesApi("gpt-5.5-2026-04-23")).toBe(true);
+    expect(openAiMeetingModelUsesResponsesApi("o3-mini")).toBe(true);
+    expect(openAiMeetingModelUsesResponsesApi("gpt-4o")).toBe(false);
+  });
+});
+
 describe("formatMeetingNotesMarkdown", () => {
   it("formats sections with bullet lists", async () => {
     const { formatMeetingNotesMarkdown } = await import("./index.js");

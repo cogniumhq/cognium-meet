@@ -45,6 +45,12 @@ export function formatMeetingLlmError(
     if (/model.*not found|does not exist/i.test(combined)) {
       return `OpenAI model "${model}" is not available for your API key. Choose another model in extension Settings.`;
     }
+    if (/400|bad request/i.test(combined) && /gpt-5\.5/i.test(model)) {
+      return `OpenAI rejected GPT-5.5 (${message}). Try gpt-4o or gpt-4.1, or confirm your API key has GPT-5.5 access.`;
+    }
+    if (/400|bad request/i.test(combined)) {
+      return `OpenAI rejected the request for model "${model}": ${message}`;
+    }
   }
 
   return message || "Meeting AI request failed";

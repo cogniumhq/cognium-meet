@@ -37,7 +37,7 @@ export async function answerMeetingQuestion(opts: {
     };
   }
 
-  const llm = createMeetingLlm(opts.llmConfig, opts.llmProvider);
+  const llm = createMeetingLlm(opts.llmConfig, opts.llmProvider, opts.model);
   const model = resolveMeetingLlmModel(opts.llmConfig, opts.model, opts.llmProvider);
 
   const result = await meetingAskGen.forward(

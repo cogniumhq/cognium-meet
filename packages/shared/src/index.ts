@@ -50,6 +50,8 @@ export interface MeetingNotes {
   recordingId: string;
   meetingTitle?: string;
   generatedAt: string;
+  /** LLM that produced these notes (when known). */
+  llmModel?: string;
   summary: string;
   actionItems: string[];
   decisions: string[];
@@ -178,6 +180,7 @@ export const OPENAI_MEETING_LLM_MODELS = [
   "gpt-4o",
   "gpt-4.1-mini",
   "gpt-4.1",
+  "gpt-5.5",
 ] as const;
 
 export const OLLAMA_MEETING_LLM_MODELS = [
@@ -211,6 +214,8 @@ export function meetingLlmModelLabel(model: string): string {
       return "GPT-4.1 mini";
     case "gpt-4.1":
       return "GPT-4.1";
+    case "gpt-5.5":
+      return "GPT-5.5 (best quality, expensive)";
     case "qwen2.5:7b":
       return "Qwen 2.5 7B";
     case "llama3.2":
@@ -274,6 +279,21 @@ export function parseMeetingLlmProvider(
 export function looksLikeOpenAiMeetingModel(model: string): boolean {
   const name = model.trim().toLowerCase();
   return name.startsWith("gpt-") || name.startsWith("o1") || name.startsWith("o3");
+}
+
+/** GPT-5.5 and reasoning models work best via OpenAI's /v1/responses API (not chat completions). */
+export function openAiMeetingModelUsesResponsesApi(model: string): boolean {
+  const name = model.trim().toLowerCase();
+  if (name.startsWith("gpt-5.5")) {
+    return true;
+  }
+  if (name.startsWith("gpt-5-pro") || name === "gpt-5-pro") {
+    return true;
+  }
+  if (/^o\d/.test(name)) {
+    return true;
+  }
+  return false;
 }
 
 /** Pick a model tag that matches the selected provider (avoids Ollama tags on OpenAI, etc.). */
@@ -504,7 +524,10 @@ export function formatMeetingNotesMarkdown(notes: MeetingNotes): string {
     lines.push("");
   }
 
-  lines.push(`_Generated ${notes.generatedAt}_`);
+  const footer = notes.llmModel
+    ? `_Generated ${notes.generatedAt} with ${notes.llmModel}_`
+    : `_Generated ${notes.generatedAt}_`;
+  lines.push(footer);
   return lines.join("\n");
 }
 

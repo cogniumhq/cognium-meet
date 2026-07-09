@@ -293,6 +293,35 @@ export async function downloadRecordingAudio(
   URL.revokeObjectURL(url);
 }
 
+export async function regenerateMeetingNotes(
+  id: string,
+  opts?: {
+    meetingLlmProvider?: string;
+    meetingLlmModel?: string;
+    ollamaUrl?: string;
+    ollamaModel?: string;
+  },
+): Promise<RecordingMeta> {
+  const settings = await getSettings();
+  const apiUrl = await getApiUrl();
+  const headers = await buildApiHeaders({ "Content-Type": "application/json" });
+
+  const response = await fetch(`${apiUrl}/v1/recordings/${id}/notes`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      meetingNotesEnabled: true,
+      ...meetingSettingsFormFields(settings),
+      ...opts,
+    }),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Notes regeneration failed (${response.status}): ${text}`);
+  }
+  return (await response.json()) as RecordingMeta;
+}
+
 export async function downloadMeetingNotes(
   id: string,
   format: "json" | "md",

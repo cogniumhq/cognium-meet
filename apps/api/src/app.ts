@@ -23,7 +23,11 @@ import {
   isTranscriptionActive,
   type ProcessingDeps,
 } from "./transcription/process-recording.js";
-import { enqueueMeetingNotes, isNotesJobActive, shouldGenerateMeetingNotes } from "./notes/process-notes.js";
+import {
+  enqueueMeetingNotes,
+  isNotesJobActive,
+  shouldGenerateMeetingNotes,
+} from "./notes/process-notes.js";
 import { requestLog } from "./middleware/request-log.js";
 import { answerMeetingQuestion } from "./ask/answer-meeting-question.js";
 import {
@@ -683,27 +687,48 @@ export function createApp(deps: AppDeps) {
     if (meta.status !== "completed") {
       return c.json({ error: "Transcript not ready", status: meta.status }, 409);
     }
-    if (meta.meetingNotesEnabled === false) {
+    if (isNotesJobActive(userId, id)) {
+      return c.json(
+        { error: "Meeting notes generation already in progress", notesStatus: "processing" },
+        409,
+      );
+    }
+
+    const body = await c.req.json<Record<string, unknown>>().catch(() => ({}));
+    if (
+      meta.meetingNotesEnabled === false &&
+      body.meetingNotesEnabled !== true &&
+      body.meetingNotesEnabled !== "true"
+    ) {
       return c.json({ error: "Meeting notes are disabled for this recording" }, 503);
     }
-    let clientSettings = recordingMeetingSettings(meta);
-    try {
-      const body = await c.req.json<Record<string, unknown>>();
-      clientSettings = parseClientMeetingSettings({
-        ...clientSettings,
-        ...body,
-      });
-    } catch {
-      // empty body is fine
-    }
+
+    const clientSettings = parseClientMeetingSettings({
+      ...recordingMeetingSettings(meta),
+      ...body,
+      meetingNotesEnabled: true,
+    });
+
     await store.saveMeta({
       ...meta,
       ...clientSettingsToRecordingFields(clientSettings),
+      meetingNotesEnabled: true,
       notesStatus: "pending",
       notesError: undefined,
     });
+    console.log(
+      `[api] notes regenerate user=${userId} id=${id} provider=${clientSettings.meetingLlmProvider} model=${clientSettings.meetingLlmModel}`,
+    );
     enqueueMeetingNotes(deps, userId, id);
-    return c.json({ id, notesStatus: "pending" }, 202);
+    return c.json(
+      {
+        id,
+        notesStatus: "pending",
+        meetingLlmProvider: clientSettings.meetingLlmProvider,
+        meetingLlmModel: clientSettings.meetingLlmModel,
+      },
+      202,
+    );
   });
 
   app.delete("/v1/recordings/:id", async (c) => {

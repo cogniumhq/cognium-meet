@@ -4,6 +4,7 @@ import {
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_OLLAMA_URL,
   coerceMeetingLlmModelForProvider,
+  openAiMeetingModelUsesResponsesApi,
   type MeetingLlmProvider,
 } from "@cognium/meet-shared";
 
@@ -41,10 +42,14 @@ export function meetingLlmConfigFromFields(
 export function createMeetingLlm(
   config: MeetingLlmConfig,
   providerOverride?: MeetingLlmProvider,
+  model?: string,
 ) {
   const provider = providerOverride ?? config.provider;
   if (provider === "ollama") {
     return ai({ name: "ollama", url: config.ollamaUrl, apiKey: "ollama" });
+  }
+  if (model && openAiMeetingModelUsesResponsesApi(model)) {
+    return ai({ name: "openai-responses", apiKey: config.openaiApiKey });
   }
   return ai({ name: "openai", apiKey: config.openaiApiKey });
 }

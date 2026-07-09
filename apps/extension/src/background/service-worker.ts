@@ -128,6 +128,17 @@ async function handleMessage(
       return;
     }
 
+    if (message.type === "TRACK_MEETING_NOTES") {
+      const id = (message as { recordingId?: string }).recordingId;
+      if (!id) {
+        sendResponse({ ok: false, error: "Missing recording id" });
+        return;
+      }
+      void trackMeetingNotes(id);
+      sendResponse({ ok: true });
+      return;
+    }
+
     if (message.type === "TAB_CAPTURE_ENDED") {
       void stopRecordingAndFinalize({ reason: "capture_ended" }).catch((err) => {
         console.error("[recording] capture ended finalize failed", err);
