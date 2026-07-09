@@ -378,7 +378,12 @@ export function parseOpenAiKeyHeader(value: string | undefined): string | undefi
   return trimmed ? trimmed : undefined;
 }
 
-/** UUID v4 assigned per Chrome profile (chrome.storage.local). */
+export {
+  COGNIUM_USER_ID_NAMESPACE,
+  cogniumUserIdFromAccountKey,
+} from "./user-id.js";
+
+/** UUID v4/v5 assigned per Chrome profile (derived from Google account when available). */
 export function isValidCogniumUserId(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
     value.trim(),

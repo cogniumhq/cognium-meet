@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  cogniumUserIdFromAccountKey,
   formatTimestamp,
+  isValidCogniumUserId,
   mergeTranscriptionProgress,
   parseAudioCaptureMode,
   parseTranscriptionModel,
@@ -8,6 +10,21 @@ import {
   transcriptionProgressLabel,
   transcriptionProgressPercent,
 } from "../src/index.js";
+
+describe("cogniumUserIdFromAccountKey", () => {
+  it("derives a stable valid UUID from an account key", async () => {
+    const a = await cogniumUserIdFromAccountKey("email:user@example.com");
+    const b = await cogniumUserIdFromAccountKey("email:user@example.com");
+    expect(a).toBe(b);
+    expect(isValidCogniumUserId(a)).toBe(true);
+  });
+
+  it("normalizes email casing", async () => {
+    const lower = await cogniumUserIdFromAccountKey("email:user@example.com");
+    const upper = await cogniumUserIdFromAccountKey("email:USER@EXAMPLE.COM");
+    expect(lower).toBe(upper);
+  });
+});
 
 describe("formatTimestamp", () => {
   it("formats seconds as HH:MM:SS", () => {

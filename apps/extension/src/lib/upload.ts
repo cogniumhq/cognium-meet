@@ -98,6 +98,17 @@ export async function fetchRecordingStatus(id: string): Promise<RecordingMeta> {
   return (await response.json()) as RecordingMeta;
 }
 
+export async function fetchRecordings(): Promise<RecordingMeta[]> {
+  const apiUrl = await getApiUrl();
+  const headers = await buildApiHeaders();
+
+  const response = await fetch(`${apiUrl}/v1/recordings`, { headers });
+  if (!response.ok) {
+    throw new Error(`Recordings list fetch failed (${response.status})`);
+  }
+  return (await response.json()) as RecordingMeta[];
+}
+
 export async function retryRecording(id: string): Promise<RecordingMeta> {
   const settings = await getSettings();
   const apiUrl = await getApiUrl();

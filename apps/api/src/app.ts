@@ -436,6 +436,13 @@ export function createApp(deps: AppDeps) {
     },
   );
 
+  app.get("/v1/recordings", async (c) => {
+    const store = c.get("store");
+    const metas = await store.listMetas();
+    const payload = await Promise.all(metas.map((meta) => recordingMetaForClient(store, meta)));
+    return c.json(payload);
+  });
+
   app.post("/v1/recordings/:id/retry", async (c) => {
     const store = c.get("store");
     const userId = c.get("userId");

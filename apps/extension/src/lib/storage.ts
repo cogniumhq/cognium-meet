@@ -13,6 +13,8 @@ import {
   type AskChatWorkspace,
 } from "./ask-workspace.js";
 import {
+  cogniumUserIdFromAccountKey,
+  isValidCogniumUserId,
   DEFAULT_API_URL,
   DEFAULT_AUDIO_CAPTURE_MODE,
   DEFAULT_DELETE_AUDIO_AFTER_TRANSCRIPTION,
@@ -26,6 +28,7 @@ import {
   DEFAULT_TRANSCRIPTION_MODEL,
   mergeTranscriptionProgress,
 } from "@cognium/meet-shared";
+import { getChromeAccountKey } from "./chrome-identity.js";
 
 const SETTINGS_KEY = "settings";
 const USER_ID_KEY = "cogniumUserId";
@@ -72,11 +75,32 @@ export async function saveOpenAiApiKey(key: string | undefined): Promise<void> {
   }
 }
 
-/** Stable per Chrome profile — stored in local (not sync) storage. */
+/** Stable per Chrome profile — derived from signed-in Google account when available. */
 export async function getOrCreateUserId(): Promise<string> {
+  const accountKey = await getChromeAccountKey();
+  if (accountKey) {
+    const userId = await cogniumUserIdFromAccountKey(accountKey);
+    const result = await chrome.storage.local.get(USER_ID_KEY);
+    const existing = result[USER_ID_KEY];
+    if (existing !== userId) {
+      if (
+        typeof existing === "string" &&
+        isValidCogniumUserId(existing) &&
+        existing !== userId
+      ) {
+        console.info(
+          `[cognium] user id is now account-based (${userId}). ` +
+            `Move server data from storage/users/${existing} to storage/users/${userId} if needed.`,
+        );
+      }
+      await chrome.storage.local.set({ [USER_ID_KEY]: userId });
+    }
+    return userId;
+  }
+
   const result = await chrome.storage.local.get(USER_ID_KEY);
   const existing = result[USER_ID_KEY];
-  if (typeof existing === "string" && existing.length > 0) {
+  if (typeof existing === "string" && isValidCogniumUserId(existing)) {
     return existing;
   }
   const userId = crypto.randomUUID();
@@ -243,6 +267,10 @@ export async function replaceHistoryEntry(
 export async function getHistory(): Promise<StoredRecording[]> {
   const result = await chrome.storage.local.get(HISTORY_KEY);
   return (result[HISTORY_KEY] as StoredRecording[] | undefined) ?? [];
+}
+
+export async function saveHistory(history: StoredRecording[]): Promise<void> {
+  await chrome.storage.local.set({ [HISTORY_KEY]: history });
 }
 
 export async function removeHistoryEntry(id: string): Promise<void> {

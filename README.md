@@ -137,9 +137,21 @@ Auth: `Authorization: Bearer <API_TOKEN>` when `API_TOKEN` is set.
 
 For OpenAI transcription/notes/Ask, send `X-OpenAI-Key` from the extension (or rely on server `OPENAI_API_KEY`). Meeting AI provider, models, upload limits, and delete-audio behavior are sent per request from extension Settings.
 
-Each Chrome profile sends a stable `X-Cognium-User-Id` (UUID in extension local storage). The API stores recordings under `storage/users/<userId>/` so profiles do not share transcripts.
+Each Chrome profile sends a stable `X-Cognium-User-Id` header. The extension derives this deterministically from the **Google account signed into Chrome** (via `chrome.identity`), so reinstalling or reloading the unpacked extension does not create a new server user folder.
 
-If you have old recordings from before per-profile storage, either record again or move files manually into your profile folder (find your UUID in extension DevTools → Application → Local Storage → `cogniumUserId`).
+The API stores recordings under `storage/users/<userId>/` so profiles do not share transcripts.
+
+### Recovering data after an extension reinstall
+
+If you re-imported the extension and lost access to old transcripts, your server data is still on disk under the **old** random UUID folder. After updating to account-based ids:
+
+1. Reload the extension (signed into Chrome with the same Google account).
+2. Open DevTools → Application → Local Storage → `cogniumUserId` (new account-based id).
+3. Find the previous user folder in `storage/users/` and move it:
+
+```bash
+mv storage/users/<old-random-uuid> storage/users/<cogniumUserId>
+```
 
 ## Output format
 

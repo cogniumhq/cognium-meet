@@ -14,6 +14,7 @@ import {
   downloadMeetingNotes,
   downloadRecordingAudio,
   downloadTranscript,
+  fetchRecordings,
   fetchRecordingStatus,
   fetchTranscript,
   retryRecording,
@@ -33,6 +34,7 @@ import {
   MAX_ASK_TABS,
   removeAskTab,
   removeHistoryEntry,
+  saveHistory,
   saveAskWorkspace,
   setActiveAskTab,
   updateAskTab,
@@ -176,10 +178,54 @@ async function init(): Promise<void> {
     setStatus(`Recording (${micNote})`, !status.includedMic);
   }
 
+  await hydrateHistoryFromServer();
   await refreshStaleHistory();
   await restoreTranscriptionProgressUi();
   await renderHistory();
   subscribeToHistoryUpdates();
+}
+
+function isLocalOnlyHistoryEntry(item: StoredRecording): boolean {
+  return (
+    Boolean(item.localAudioId) ||
+    item.status === "saved" ||
+    item.status === "upload_failed"
+  );
+}
+
+function recordingMetaToStoredRecording(meta: RecordingMeta): StoredRecording {
+  return {
+    id: meta.id,
+    meetingTitle: meta.meetingTitle,
+    startedAt: meta.startedAt,
+    durationMs: meta.durationMs,
+    status: meta.status,
+    error: meta.error,
+    createdAt: meta.startedAt,
+    notesStatus: meta.notesStatus,
+    notesError: meta.notesError,
+    deleteAudioAfterTranscription: meta.deleteAudioAfterTranscription,
+    hasAudio: meta.hasAudio,
+    hasMicAudio: meta.hasMicAudio,
+  };
+}
+
+async function hydrateHistoryFromServer(): Promise<void> {
+  const local = await getHistory();
+  let remote: RecordingMeta[];
+  try {
+    remote = await fetchRecordings();
+  } catch {
+    return;
+  }
+
+  const localOnly = local.filter(isLocalOnlyHistoryEntry);
+  const merged = [
+    ...remote.map(recordingMetaToStoredRecording),
+    ...localOnly.filter((item) => !remote.some((meta) => meta.id === item.id)),
+  ].slice(0, 50);
+
+  await saveHistory(merged);
 }
 
 function subscribeToHistoryUpdates(): void {
