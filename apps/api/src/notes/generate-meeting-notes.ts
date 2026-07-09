@@ -9,13 +9,14 @@ import type { MeetingLlmConfig } from "../llm/create-meeting-llm.js";
 import { createMeetingLlm, resolveMeetingLlmModel } from "../llm/create-meeting-llm.js";
 import { generateMeetingNotesWithOpenAiReasoning } from "./generate-meeting-notes-openai-reasoning.js";
 
+import { MEETING_NOTES_EXTRACTION_RULES } from "./meeting-notes-prompt.js";
+
 const MAX_TRANSCRIPT_CHARS = 90_000;
 
 const meetingNotesGen = ax(
   `meetingTitle:string, transcript:string -> summary:string, actionItems:string[], decisions:string[], openQuestions:string[]`,
   {
-    description:
-      "Extract structured meeting notes from a transcript. Action items should be specific and start with a verb. Decisions are firm conclusions reached. Open questions are unresolved topics.",
+    description: MEETING_NOTES_EXTRACTION_RULES,
   },
 );
 

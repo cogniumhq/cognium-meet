@@ -46,6 +46,11 @@ export type NotesStatus =
   | "failed"
   | "skipped";
 
+export interface MeetingActionItem {
+  owner: string;
+  task: string;
+}
+
 export interface MeetingNotes {
   recordingId: string;
   meetingTitle?: string;
@@ -53,9 +58,25 @@ export interface MeetingNotes {
   /** LLM that produced these notes (when known). */
   llmModel?: string;
   summary: string;
+  /** Baseline targets and success metrics (not tasks). */
+  goals?: string[];
   actionItems: string[];
+  /** Later / multi-sprint work discussed but not immediate. */
+  roadmap?: string[];
   decisions: string[];
   openQuestions: string[];
+}
+
+export function formatMeetingActionItem(item: MeetingActionItem): string {
+  const owner = item.owner.trim();
+  const task = item.task.trim();
+  if (!task) {
+    return "";
+  }
+  if (!owner || owner.toLowerCase() === "unassigned" || owner.toLowerCase() === "team") {
+    return task;
+  }
+  return `**${owner}:** ${task}`;
 }
 
 export interface RecordingMeta {
@@ -494,11 +515,29 @@ export function formatMeetingNotesMarkdown(notes: MeetingNotes): string {
     lines.push(`**${notes.meetingTitle}**`, "");
   }
 
-  lines.push("## Summary", "", notes.summary.trim(), "", "## Action items", "");
+  lines.push("## Summary", "", notes.summary.trim(), "");
+
+  if (notes.goals && notes.goals.length > 0) {
+    lines.push("## Goals", "");
+    for (const item of notes.goals) {
+      lines.push(`- ${item.trim()}`);
+    }
+    lines.push("");
+  }
+
+  lines.push("## Action items", "");
   if (notes.actionItems.length === 0) {
     lines.push("_None identified._", "");
   } else {
     for (const item of notes.actionItems) {
+      lines.push(`- ${item.trim()}`);
+    }
+    lines.push("");
+  }
+
+  if (notes.roadmap && notes.roadmap.length > 0) {
+    lines.push("## Roadmap (later)", "");
+    for (const item of notes.roadmap) {
       lines.push(`- ${item.trim()}`);
     }
     lines.push("");

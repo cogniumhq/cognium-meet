@@ -227,7 +227,33 @@ describe("openAiMeetingModelUsesResponsesApi", () => {
   });
 });
 
+describe("formatMeetingActionItem", () => {
+  it("prefixes named owners and leaves team items plain", async () => {
+    const { formatMeetingActionItem } = await import("./index.js");
+    expect(formatMeetingActionItem({ owner: "Eyal", task: "Ship v1" })).toBe("**Eyal:** Ship v1");
+    expect(formatMeetingActionItem({ owner: "Team", task: "Post notes" })).toBe("Post notes");
+  });
+});
+
 describe("formatMeetingNotesMarkdown", () => {
+  it("formats optional goals and roadmap sections", async () => {
+    const { formatMeetingNotesMarkdown } = await import("./index.js");
+    const md = formatMeetingNotesMarkdown({
+      recordingId: "abc",
+      meetingTitle: "Standup",
+      generatedAt: "2026-01-01T00:00:00.000Z",
+      summary: "Discussed launch timeline.",
+      goals: ["Scan 350 Java repositories"],
+      actionItems: ["**Eyal:** Ship v1"],
+      roadmap: ["Nightly regression runs"],
+      decisions: ["Use Whisper by default"],
+      openQuestions: ["When to enable diarize?"],
+    });
+    expect(md).toContain("## Goals");
+    expect(md).toContain("## Roadmap (later)");
+    expect(md).toContain("**Eyal:** Ship v1");
+  });
+
   it("formats sections with bullet lists", async () => {
     const { formatMeetingNotesMarkdown } = await import("./index.js");
     const md = formatMeetingNotesMarkdown({
