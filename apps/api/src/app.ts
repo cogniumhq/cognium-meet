@@ -709,12 +709,27 @@ export function createApp(deps: AppDeps) {
       meetingNotesEnabled: true,
     });
 
+    const requestOpenAiKey = parseOpenAiKeyHeader(c.req.header(OPENAI_API_KEY_HEADER));
+    if (clientSettings.meetingLlmProvider === "openai") {
+      try {
+        requireOpenAiApiKey({
+          requestKey: requestOpenAiKey,
+          storedKey: meta.openaiApiKey,
+          serverKey: deps.openaiApiKey,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return c.json({ error: message }, 400);
+      }
+    }
+
     await store.saveMeta({
       ...meta,
       ...clientSettingsToRecordingFields(clientSettings),
       meetingNotesEnabled: true,
       notesStatus: "pending",
       notesError: undefined,
+      ...(requestOpenAiKey ? { openaiApiKey: requestOpenAiKey } : {}),
     });
     console.log(
       `[api] notes regenerate user=${userId} id=${id} provider=${clientSettings.meetingLlmProvider} model=${clientSettings.meetingLlmModel}`,

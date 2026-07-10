@@ -83,6 +83,12 @@ function bindConnectionDirtyTracking(els: SettingsFormElements): void {
   els.apiUrlInput.addEventListener("input", onEdit);
   els.apiTokenInput.addEventListener("input", onEdit);
   els.openaiApiKeyInput.addEventListener("input", onEdit);
+  els.openaiApiKeyInput.addEventListener("change", () => {
+    void saveOpenAiApiKey(els.openaiApiKeyInput.value).then(() => {
+      snapshotConnectionFields(els);
+      setFieldStatus(els.connectionSaveStatus, "OpenAI key saved.", false);
+    });
+  });
 }
 
 export interface SettingsFormElements {
