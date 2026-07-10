@@ -1182,7 +1182,7 @@ function createStatusBadge(status: string): HTMLSpanElement {
 function createChipBtn(
   label: string,
   onClick: () => void,
-  variant: "accent" | "default" | "ghost" | "danger" = "ghost",
+  variant: "accent" | "default" | "ghost" | "danger" | "export" = "ghost",
 ): HTMLButtonElement {
   const btn = document.createElement("button");
   btn.type = "button";
@@ -1193,6 +1193,8 @@ function createChipBtn(
     classes.push("btn-chip--accent");
   } else if (variant === "danger") {
     classes.push("btn-chip--danger");
+  } else if (variant === "export") {
+    classes.push("btn-chip--export");
   }
   btn.className = classes.join(" ");
   btn.textContent = label;
@@ -1200,30 +1202,75 @@ function createChipBtn(
   return btn;
 }
 
-function createHistoryActions(): {
+function meetingLlmModelShortLabel(model: string): string {
+  switch (model) {
+    case "gpt-4o-mini":
+      return "4o mini";
+    case "gpt-4o":
+      return "4o";
+    case "gpt-4.1-mini":
+      return "4.1 mini";
+    case "gpt-4.1":
+      return "4.1";
+    case "gpt-5.5":
+      return "5.5";
+    default:
+      return model.length > 14 ? `${model.slice(0, 12)}…` : model;
+  }
+}
+
+function createHistoryDeleteBtn(
+  label: string,
+  onClick: () => void,
+): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "history-delete-btn";
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
+  btn.textContent = "×";
+  btn.addEventListener("click", onClick);
+  return btn;
+}
+
+function createHistoryActions(opts?: { showExport?: boolean; showNotes?: boolean }): {
   root: HTMLDivElement;
-  primary: HTMLDivElement;
-  export: HTMLDivElement;
-  footer: HTMLDivElement;
+  toolbar: HTMLDivElement;
+  exportLinks: HTMLDivElement;
+  notes: HTMLDivElement;
 } {
   const root = document.createElement("div");
   root.className = "history-actions";
-  const primary = document.createElement("div");
-  primary.className = "history-actions-primary";
-  const secondary = document.createElement("div");
-  secondary.className = "history-actions-secondary";
-  const exportRow = document.createElement("div");
-  exportRow.className = "history-actions-export";
-  const footer = document.createElement("div");
-  footer.className = "history-actions-footer";
-  secondary.append(exportRow, footer);
-  root.append(primary, secondary);
-  return { root, primary, export: exportRow, footer };
+
+  const strip = document.createElement("div");
+  strip.className = "history-action-strip";
+  if (opts?.showExport === false) {
+    strip.classList.add("history-action-strip--toolbar-only");
+  }
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "history-toolbar";
+
+  const exportLinks = document.createElement("div");
+  exportLinks.className = "history-export-links";
+  exportLinks.hidden = opts?.showExport === false;
+
+  const notes = document.createElement("div");
+  notes.className = "history-notes-inline";
+  notes.hidden = opts?.showNotes === false;
+
+  strip.append(toolbar, exportLinks, notes);
+  root.append(strip);
+  return { root, toolbar, exportLinks, notes };
 }
 
 function appendHistoryHead(
   li: HTMLLIElement,
   item: { meetingTitle?: string; status: string },
+  opts?: {
+    onRemove?: () => void;
+    removeLabel?: string;
+  },
 ): void {
   const head = document.createElement("div");
   head.className = "history-item-head";
@@ -1231,9 +1278,18 @@ function appendHistoryHead(
   const title = document.createElement("div");
   title.className = "history-title";
   title.textContent = item.meetingTitle ?? "Recording";
+  title.title = item.meetingTitle ?? "Recording";
 
-  head.appendChild(title);
-  head.appendChild(createStatusBadge(item.status));
+  const headRight = document.createElement("div");
+  headRight.className = "history-head-right";
+  headRight.appendChild(createStatusBadge(item.status));
+  if (opts?.onRemove) {
+    headRight.appendChild(
+      createHistoryDeleteBtn(opts.removeLabel ?? "Remove", opts.onRemove),
+    );
+  }
+
+  head.append(title, headRight);
   li.appendChild(head);
 }
 
@@ -1246,7 +1302,15 @@ function appendHistoryMeta(
 
   const date = document.createElement("span");
   date.className = "history-date";
-  date.textContent = new Date(item.startedAt).toLocaleString();
+  const started = new Date(item.startedAt);
+  date.textContent = started.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  date.title = started.toLocaleString();
   meta.appendChild(date);
 
   const durationLabel = formatRecordingDurationMs(item.durationMs);
@@ -1379,7 +1443,8 @@ function createNotesModelSelect(settings: ExtensionSettings): HTMLSelectElement 
   for (const model of models) {
     const option = document.createElement("option");
     option.value = model;
-    option.textContent = meetingLlmModelLabel(model);
+    option.textContent = meetingLlmModelShortLabel(model);
+    option.title = meetingLlmModelLabel(model);
     select.appendChild(option);
   }
   select.value = effective;
@@ -1387,7 +1452,7 @@ function createNotesModelSelect(settings: ExtensionSettings): HTMLSelectElement 
 }
 
 function appendNotesRegenerateControls(
-  parent: HTMLElement,
+  toolbar: HTMLElement,
   item: { id: string; notesStatus?: string; notesError?: string },
   settings: ExtensionSettings,
 ): void {
@@ -1395,31 +1460,19 @@ function appendNotesRegenerateControls(
     const pending = document.createElement("span");
     pending.className = "history-notes-pending";
     pending.textContent = "Generating notes…";
-    parent.appendChild(pending);
+    toolbar.appendChild(pending);
     return;
   }
 
-  if (item.notesStatus === "failed" && item.notesError) {
-    const err = document.createElement("div");
-    err.className = "history-error";
-    err.textContent = item.notesError;
-    parent.appendChild(err);
-  }
-
-  if (item.notesStatus !== "pending" && item.notesStatus !== "processing") {
-    const row = document.createElement("div");
-    row.className = "history-notes-regenerate";
-    const select = createNotesModelSelect(settings);
-    row.appendChild(select);
-    row.appendChild(
-      createChipBtn(
-        "Regenerate notes",
-        () => void regenerateNotes(item.id, settings, select),
-        "accent",
-      ),
-    );
-    parent.appendChild(row);
-  }
+  const select = createNotesModelSelect(settings);
+  toolbar.appendChild(
+    createChipBtn(
+      "Gen Notes",
+      () => void regenerateNotes(item.id, settings, select),
+      "accent",
+    ),
+  );
+  toolbar.appendChild(select);
 }
 
 async function retryUpload(localAudioId: string): Promise<void> {
@@ -1534,6 +1587,7 @@ function appendServerAudioDownloads(
             showMic ? `${base}-tab.webm` : `${base}.webm`,
           ).catch((err) => setStatus(err instanceof Error ? err.message : String(err), true));
         },
+        "export",
       ),
     );
   }
@@ -1544,7 +1598,7 @@ function appendServerAudioDownloads(
         void downloadRecordingAudio(item.id, "mic", `${base}-mic.webm`).catch((err) =>
           setStatus(err instanceof Error ? err.message : String(err), true),
         );
-      }),
+      }, "export"),
     );
   }
 }
@@ -1566,7 +1620,7 @@ function appendLocalAudioDownloadsOnly(
         hasMicTrack ? `${base}-tab.webm` : `${base}.webm`,
         "tab",
       ).catch((err) => setStatus(err instanceof Error ? err.message : String(err), true));
-    }),
+    }, "export"),
   );
 
   if (hasMicTrack) {
@@ -1575,7 +1629,7 @@ function appendLocalAudioDownloadsOnly(
         void downloadPendingAudio(item.localAudioId!, `${base}-mic.webm`, "mic").catch((err) =>
           setStatus(err instanceof Error ? err.message : String(err), true),
         );
-      }),
+      }, "export"),
     );
   }
 }
@@ -1590,46 +1644,50 @@ function appendLocalAudioActions(
     return;
   }
 
-  const { root, primary, export: exportRow, footer } = createHistoryActions();
+  const { root, toolbar, exportLinks } = createHistoryActions();
 
-  primary.appendChild(
+  toolbar.appendChild(
     createChipBtn(uploadLabel, () => void retryUpload(item.localAudioId!), "accent"),
   );
-  appendLocalAudioDownloadsOnly(exportRow, item, hasMicTrack);
-
-  footer.appendChild(
-    createChipBtn("Delete local", () => void deleteLocalRecording(item), "danger"),
-  );
+  appendLocalAudioDownloadsOnly(exportLinks, item, hasMicTrack);
 
   li.appendChild(root);
 }
 
-function appendRemoveAction(
-  li: HTMLLIElement,
-  item: { id: string; meetingTitle?: string; status: string; localAudioId?: string },
-  footer?: HTMLDivElement,
-): void {
-  const onServer =
-    !item.localAudioId &&
-    (item.status === "completed" ||
-      item.status === "failed" ||
-      item.status === "processing");
-
-  const remove = createChipBtn(
-    onServer ? "Delete" : "Remove",
-    () => void removeFromHistory(item),
-    "danger",
-  );
-
-  if (footer) {
-    footer.appendChild(remove);
-    return;
+function historyRemoveLabel(item: {
+  status: string;
+  localAudioId?: string;
+}): string | undefined {
+  if (item.localAudioId) {
+    return "Delete local recording";
   }
+  if (
+    item.status === "completed" ||
+    item.status === "failed" ||
+    item.status === "processing"
+  ) {
+    return "Delete recording";
+  }
+  return "Remove from list";
+}
 
-  const container = document.createElement("div");
-  container.className = "history-actions-footer";
-  container.appendChild(remove);
-  li.appendChild(container);
+function appendHistoryHeader(
+  li: HTMLLIElement,
+  item: {
+    meetingTitle?: string;
+    status: string;
+    startedAt: string;
+    durationMs?: number;
+    id: string;
+    localAudioId?: string;
+  },
+): void {
+  const removeLabel = historyRemoveLabel(item);
+  appendHistoryHead(li, item, {
+    onRemove: () => void removeFromHistory(item),
+    removeLabel,
+  });
+  appendHistoryMeta(li, item);
 }
 
 async function renderHistory(): Promise<void> {
@@ -1669,8 +1727,7 @@ async function renderHistory(): Promise<void> {
       }
     }
 
-    appendHistoryHead(li, item);
-    appendHistoryMeta(li, { ...item, durationMs });
+    appendHistoryHeader(li, { ...item, durationMs });
 
     if (item.status === "upload_failed" && item.localAudioId) {
       if (item.error) {
@@ -1694,58 +1751,66 @@ async function renderHistory(): Promise<void> {
         li.appendChild(err);
       }
 
-      const { root, primary, footer } = createHistoryActions();
-      primary.appendChild(
+      const { root, toolbar } = createHistoryActions({
+        showExport: false,
+        showNotes: false,
+      });
+      toolbar.appendChild(
         createChipBtn("Retry transcription", () => void retryTranscription(item.id), "accent"),
       );
-      appendRemoveAction(li, item, footer);
       li.appendChild(root);
     }
 
     if (item.status === "completed") {
-      const { root, primary, export: exportRow, footer } = createHistoryActions();
+      const { root, toolbar, exportLinks } = createHistoryActions({ showNotes: false });
 
-      primary.appendChild(
+      toolbar.appendChild(
         createChipBtn("View transcript", () => void openTranscriptViewer(item), "accent"),
       );
-      primary.appendChild(
-        createChipBtn("Ask", () => void openAskForRecording(item), "ghost"),
+      toolbar.appendChild(
+        createChipBtn("Ask", () => void openAskForRecording(item), "default"),
       );
 
-      exportRow.appendChild(
+      if (item.notesStatus === "failed" && item.notesError) {
+        const err = document.createElement("div");
+        err.className = "history-error";
+        err.textContent = item.notesError;
+        li.appendChild(err);
+      }
+
+      appendNotesRegenerateControls(toolbar, item, settings);
+
+      exportLinks.appendChild(
         createChipBtn("TXT", () => {
           void downloadTranscript(item.id, "txt").catch((err) =>
             setStatus(err instanceof Error ? err.message : String(err), true),
           );
-        }),
+        }, "export"),
       );
-      exportRow.appendChild(
+      exportLinks.appendChild(
         createChipBtn("JSON", () => {
           void downloadTranscript(item.id, "json").catch((err) =>
             setStatus(err instanceof Error ? err.message : String(err), true),
           );
-        }),
+        }, "export"),
       );
 
       if (item.localAudioId) {
-        appendLocalAudioDownloadsOnly(exportRow, item, hasMicTrack);
+        appendLocalAudioDownloadsOnly(exportLinks, item, hasMicTrack);
       } else {
-        appendServerAudioDownloads(exportRow, item, hasMicTrack);
+        appendServerAudioDownloads(exportLinks, item, hasMicTrack);
       }
 
       if (item.notesStatus === "completed") {
-        exportRow.appendChild(
+        exportLinks.appendChild(
           createChipBtn("Notes", () => {
             void downloadMeetingNotes(item.id, "md").catch((err) =>
               setStatus(err instanceof Error ? err.message : String(err), true),
             );
-          }),
+          }, "export"),
         );
       }
 
-      appendNotesRegenerateControls(exportRow, item, settings);
-
-      appendRemoveAction(li, item, footer);
       li.appendChild(root);
     }
 
@@ -1754,9 +1819,6 @@ async function renderHistory(): Promise<void> {
       if (progressBar) {
         li.appendChild(progressBar);
       }
-      const { root, footer } = createHistoryActions();
-      appendRemoveAction(li, item, footer);
-      li.appendChild(root);
     }
 
     if (gen !== historyRenderGen) {
