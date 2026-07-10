@@ -1,4 +1,5 @@
 import type { MeetingAskMessage } from "@cognium/meet-shared";
+import { formatRecordingDurationMs } from "@cognium/meet-shared";
 import type { AskChatState } from "./storage.js";
 
 export const ASK_WORKSPACE_KEY = "meetingAskWorkspace";
@@ -10,9 +11,39 @@ export interface AskChatTab {
   label: string;
   scopeRecordingId?: string;
   scopeMeetingTitle?: string;
+  scopeStartedAt?: string;
+  scopeDurationMs?: number;
   messages: MeetingAskMessage[];
   draftInput?: string;
   pending?: boolean;
+}
+
+export function formatMeetingScopeWhen(opts: {
+  startedAt?: string;
+  durationMs?: number;
+}): string | undefined {
+  if (!opts.startedAt) {
+    return undefined;
+  }
+  const started = new Date(opts.startedAt);
+  const when = started.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  const duration = formatRecordingDurationMs(opts.durationMs);
+  return duration ? `${when} · ${duration}` : when;
+}
+
+export function formatMeetingScopeLabel(
+  title: string | undefined,
+  opts: { startedAt?: string; durationMs?: number },
+): string {
+  const name = title?.trim() || "Recording";
+  const when = formatMeetingScopeWhen(opts);
+  return when ? `${name} · ${when}` : name;
 }
 
 export interface AskChatWorkspace {
@@ -34,16 +65,23 @@ export function truncateAskTabLabel(text: string, max = 22): string {
 
 export function deriveAskTabLabel(tab: Pick<
   AskChatTab,
-  "label" | "scopeRecordingId" | "scopeMeetingTitle" | "messages"
+  | "label"
+  | "scopeRecordingId"
+  | "scopeMeetingTitle"
+  | "scopeStartedAt"
+  | "scopeDurationMs"
+  | "messages"
 >): string {
   if (tab.label.trim()) {
     return tab.label.trim();
   }
-  if (tab.scopeMeetingTitle?.trim()) {
-    return truncateAskTabLabel(tab.scopeMeetingTitle);
-  }
-  if (tab.scopeRecordingId) {
-    return "Recording";
+  if (tab.scopeRecordingId || tab.scopeMeetingTitle?.trim()) {
+    return truncateAskTabLabel(
+      formatMeetingScopeLabel(tab.scopeMeetingTitle, {
+        startedAt: tab.scopeStartedAt,
+        durationMs: tab.scopeDurationMs,
+      }),
+    );
   }
   const firstUser = tab.messages.find((m) => m.role === "user");
   if (firstUser?.content.trim()) {
@@ -55,6 +93,8 @@ export function deriveAskTabLabel(tab: Pick<
 export function createAskTab(opts?: {
   scopeRecordingId?: string;
   scopeMeetingTitle?: string;
+  scopeStartedAt?: string;
+  scopeDurationMs?: number;
   label?: string;
 }): AskChatTab {
   const tab: AskChatTab = {
@@ -62,6 +102,8 @@ export function createAskTab(opts?: {
     label: opts?.label?.trim() ?? "",
     scopeRecordingId: opts?.scopeRecordingId,
     scopeMeetingTitle: opts?.scopeMeetingTitle,
+    scopeStartedAt: opts?.scopeStartedAt,
+    scopeDurationMs: opts?.scopeDurationMs,
     messages: [],
     draftInput: "",
     pending: false,

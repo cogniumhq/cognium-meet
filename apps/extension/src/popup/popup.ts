@@ -39,6 +39,7 @@ import {
   ASK_WORKSPACE_KEY,
   createAskTab,
   findPendingAskTab,
+  formatMeetingScopeLabel,
   findServerProcessingEntry,
   getActiveAskTab,
   getHistory,
@@ -118,6 +119,8 @@ let currentTranscript: TranscriptResult | undefined;
 let askActiveTabId = "";
 let askScopeRecordingId: string | undefined;
 let askScopeMeetingTitle: string | undefined;
+let askScopeStartedAt: string | undefined;
+let askScopeDurationMs: number | undefined;
 let askMessages: MeetingAskMessage[] = [];
 let askChatSaveTimer: number | undefined;
 let askLoading = false;
@@ -494,10 +497,16 @@ function syncAskSectionOpen(): void {
 
 function updateAskScopeChrome(): void {
   if (askScopeRecordingId) {
-    meetingAskLabel.textContent = `Ask about: ${askScopeMeetingTitle ?? "Recording"}`;
+    const scopeLabel = formatMeetingScopeLabel(askScopeMeetingTitle, {
+      startedAt: askScopeStartedAt,
+      durationMs: askScopeDurationMs,
+    });
+    meetingAskLabel.textContent = `Ask about: ${scopeLabel}`;
+    meetingAskLabel.title = scopeLabel;
     meetingAskClearScope.classList.remove("hidden");
   } else {
     meetingAskLabel.textContent = "Ask about your meetings";
+    meetingAskLabel.removeAttribute("title");
     meetingAskClearScope.classList.add("hidden");
   }
 }
@@ -505,12 +514,16 @@ function updateAskScopeChrome(): void {
 function applyActiveTabToUi(tab: {
   scopeRecordingId?: string;
   scopeMeetingTitle?: string;
+  scopeStartedAt?: string;
+  scopeDurationMs?: number;
   messages: MeetingAskMessage[];
   draftInput?: string;
   pending?: boolean;
 }): void {
   askScopeRecordingId = tab.scopeRecordingId;
   askScopeMeetingTitle = tab.scopeMeetingTitle;
+  askScopeStartedAt = tab.scopeStartedAt;
+  askScopeDurationMs = tab.scopeDurationMs;
   askMessages = tab.messages ?? [];
   askLoading = tab.pending === true;
   meetingAsk.value = tab.draftInput ?? "";
@@ -536,6 +549,12 @@ function renderAskTabs(workspace: AskChatWorkspace): void {
     const label = document.createElement("span");
     label.className = "meeting-ask-tab-label";
     label.textContent = tab.label;
+    if (tab.scopeRecordingId) {
+      label.title = formatMeetingScopeLabel(tab.scopeMeetingTitle, {
+        startedAt: tab.scopeStartedAt,
+        durationMs: tab.scopeDurationMs,
+      });
+    }
     btn.appendChild(label);
 
     if (workspace.tabs.length > 1) {
@@ -568,6 +587,8 @@ async function persistActiveTab(pending = askLoading): Promise<void> {
   workspace = updateAskTab(workspace, askActiveTabId, {
     scopeRecordingId: askScopeRecordingId,
     scopeMeetingTitle: askScopeMeetingTitle,
+    scopeStartedAt: askScopeStartedAt,
+    scopeDurationMs: askScopeDurationMs,
     messages: askMessages,
     draftInput: meetingAsk.value,
     pending,
@@ -589,6 +610,8 @@ async function switchAskTab(tabId: string): Promise<void> {
 async function createNewAskTab(opts?: {
   scopeRecordingId?: string;
   scopeMeetingTitle?: string;
+  scopeStartedAt?: string;
+  scopeDurationMs?: number;
 }): Promise<void> {
   setAskSectionOpen(true);
   await persistActiveTab(askLoading);
@@ -616,13 +639,35 @@ async function openAskForRecording(item: StoredRecording): Promise<void> {
   await createNewAskTab({
     scopeRecordingId: item.id,
     scopeMeetingTitle: item.meetingTitle,
+    scopeStartedAt: item.startedAt,
+    scopeDurationMs: item.durationMs,
   });
+}
+
+function askTabClosePrompt(tab: {
+  label: string;
+  scopeRecordingId?: string;
+  scopeMeetingTitle?: string;
+  scopeStartedAt?: string;
+  scopeDurationMs?: number;
+}): boolean {
+  const name = tab.scopeRecordingId
+    ? formatMeetingScopeLabel(tab.scopeMeetingTitle, {
+        startedAt: tab.scopeStartedAt,
+        durationMs: tab.scopeDurationMs,
+      })
+    : tab.label.trim() || "this chat";
+
+  return confirm(`Close "${name}"?\n\nMessages in this chat will be deleted.`);
 }
 
 async function closeAskTab(tabId: string): Promise<void> {
   const workspace = await loadAskWorkspace();
   const closing = workspace.tabs.find((tab) => tab.id === tabId);
   if (!closing) {
+    return;
+  }
+  if (!askTabClosePrompt(closing)) {
     return;
   }
   if (closing.pending) {
@@ -643,6 +688,8 @@ async function setAskScope(item?: StoredRecording): Promise<void> {
   await persistActiveTab(askLoading);
   askScopeRecordingId = item?.id;
   askScopeMeetingTitle = item?.meetingTitle;
+  askScopeStartedAt = item?.startedAt;
+  askScopeDurationMs = item?.durationMs;
   if (prevScope !== askScopeRecordingId && askMessages.length > 0) {
     askMessages = [];
     renderAskThread();
@@ -676,7 +723,30 @@ function scheduleSaveAskChat(): void {
 }
 
 async function refreshAskFromStorage(): Promise<void> {
-  const workspace = await loadAskWorkspace();
+  let workspace = await loadAskWorkspace();
+  const history = await getHistory();
+  let enriched = false;
+
+  for (const tab of workspace.tabs) {
+    if (!tab.scopeRecordingId || tab.scopeStartedAt) {
+      continue;
+    }
+    const match = history.find((item) => item.id === tab.scopeRecordingId);
+    if (!match) {
+      continue;
+    }
+    workspace = updateAskTab(workspace, tab.id, {
+      scopeMeetingTitle: tab.scopeMeetingTitle ?? match.meetingTitle,
+      scopeStartedAt: match.startedAt,
+      scopeDurationMs: match.durationMs,
+    });
+    enriched = true;
+  }
+
+  if (enriched) {
+    await saveAskWorkspace(workspace);
+  }
+
   const active = getActiveAskTab(workspace);
   askActiveTabId = active.id;
   applyActiveTabToUi(active);

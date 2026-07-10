@@ -138,6 +138,7 @@ export {
   createAskTab,
   defaultAskWorkspace,
   findPendingAskTab,
+  formatMeetingScopeLabel,
   getActiveAskTab,
   LEGACY_ASK_CHAT_KEY,
   MAX_ASK_TABS,
