@@ -1,20 +1,16 @@
 import { ax } from "@ax-llm/ax";
-import type {
-  MeetingLlmProvider,
-  MeetingNotes,
-  TranscriptResult,
-} from "@cognium/meet-shared";
-import { segmentsToPlainText, openAiMeetingModelUsesResponsesApi } from "@cognium/meet-shared";
+import type { MeetingLlmProvider, TranscriptResult } from "@cognium/meet-shared";
+import { openAiMeetingModelUsesResponsesApi, segmentsToPlainText } from "@cognium/meet-shared";
 import type { MeetingLlmConfig } from "../llm/create-meeting-llm.js";
 import { createMeetingLlm, resolveMeetingLlmModel } from "../llm/create-meeting-llm.js";
 import { generateMeetingNotesWithOpenAiReasoning } from "./generate-meeting-notes-openai-reasoning.js";
-
 import { MEETING_NOTES_EXTRACTION_RULES } from "./meeting-notes-prompt.js";
+import { buildMeetingNotes } from "./normalize-meeting-notes.js";
 
 const MAX_TRANSCRIPT_CHARS = 90_000;
 
 const meetingNotesGen = ax(
-  `meetingTitle:string, transcript:string -> summary:string, actionItems:string[], decisions:string[], openQuestions:string[]`,
+  `meetingTitle:string, transcript:string -> summary:string, goals:string[], actionItems:json, roadmap:string[], decisions:string[], openQuestions:string[]`,
   {
     description: MEETING_NOTES_EXTRACTION_RULES,
   },
@@ -27,7 +23,7 @@ export async function generateMeetingNotes(opts: {
   recordingId: string;
   meetingTitle?: string;
   transcript: TranscriptResult;
-}): Promise<MeetingNotes> {
+}) {
   const model = resolveMeetingLlmModel(opts.llmConfig, opts.model, opts.llmProvider);
   const provider = opts.llmProvider ?? opts.llmConfig.provider;
 
@@ -64,23 +60,17 @@ export async function generateMeetingNotes(opts: {
     },
   );
 
-  return {
+  return buildMeetingNotes({
     recordingId: opts.recordingId,
     meetingTitle: opts.meetingTitle,
-    generatedAt: new Date().toISOString(),
     llmModel: model,
-    summary: result.summary?.trim() || "No summary generated.",
-    actionItems: normalizeList(result.actionItems),
-    decisions: normalizeList(result.decisions),
-    openQuestions: normalizeList(result.openQuestions),
-  };
-}
-
-function normalizeList(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return value
-    .map((item) => (typeof item === "string" ? item.trim() : ""))
-    .filter(Boolean);
+    parsed: {
+      summary: result.summary,
+      goals: result.goals,
+      actionItems: result.actionItems,
+      roadmap: result.roadmap,
+      decisions: result.decisions,
+      openQuestions: result.openQuestions,
+    },
+  });
 }
