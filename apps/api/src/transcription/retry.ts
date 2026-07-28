@@ -10,6 +10,7 @@ export function isRetryableError(err: unknown): boolean {
     lower.includes("socket hang up") ||
     lower.includes("network") ||
     lower.includes("429") ||
+    lower.includes("500") ||
     lower.includes("503") ||
     lower.includes("502") ||
     lower.includes("504")

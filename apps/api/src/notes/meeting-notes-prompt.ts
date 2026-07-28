@@ -38,3 +38,32 @@ You are extracting meeting notes from a transcript. Optimize for EXECUTION, not 
 - The same fact must appear in only ONE section.
 - If something is a goal, it must not also be an action item or decision.
 `.trim();
+
+/** Extra rules when extracting from one chunk of a longer transcript (map step). */
+export const MEETING_NOTES_MAP_CHUNK_RULES = `
+${MEETING_NOTES_EXTRACTION_RULES}
+
+## Chunk context
+- You are reading ONE consecutive segment of a longer meeting transcript.
+- Extract only facts stated in this segment.
+- If a topic is cut off at the segment boundary, capture what is said; do not guess the rest.
+`.trim();
+
+/** Rules for merging partial notes from multiple chunks (reduce step). */
+export const MEETING_NOTES_REDUCE_RULES = `
+You are merging partial meeting notes extracted from consecutive transcript chunks into one final note set.
+
+## Summary
+- Write ONE unified summary (3–5 sentences) covering the whole meeting.
+
+## Merge lists
+- Combine goals, action items, roadmap, decisions, and open questions from all chunks.
+- Deduplicate near-duplicates; keep the more specific wording.
+- Apply the same section semantics as extraction (goals ≠ action items ≠ roadmap).
+- Respect max counts: goals 6, action items 12, roadmap 8, decisions 8, open questions 6.
+- Drop items that are clearly sub-bullets of another merged item.
+- Preserve owner tags on action items (**Name:** task) when present.
+
+## Deduplication
+- The same fact must appear in only ONE section in the final output.
+`.trim();

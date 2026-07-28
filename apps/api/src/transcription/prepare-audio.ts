@@ -7,6 +7,11 @@ const execFileAsync = promisify(execFile);
 
 /** OpenAI audio file upload limit */
 export const WHISPER_MAX_BYTES = 24 * 1024 * 1024;
+/**
+ * Soft duration cap per Whisper request. Files under 25 MB can still 500 on
+ * long single uploads (~30+ min); split into ≤10 min parts.
+ */
+export const WHISPER_SEGMENT_SECONDS = 10 * 60;
 
 /** OpenAI gpt-4o-transcribe-diarize max input duration (seconds). */
 export const DIARIZE_MAX_SECONDS = 1400;
@@ -228,7 +233,12 @@ export async function prepareAudioChunksForWhisper(
     return { paths: [inputPath], cleanup: [] };
   }
 
-  if (size <= WHISPER_MAX_BYTES) {
+  const duration = await getAudioDurationSeconds(prepared);
+  const overSize = size > WHISPER_MAX_BYTES;
+  const overDuration =
+    typeof duration === "number" && duration > WHISPER_SEGMENT_SECONDS;
+
+  if (!overSize && !overDuration) {
     return { paths: [prepared], cleanup };
   }
 
@@ -246,7 +256,9 @@ export async function prepareAudioChunksForWhisper(
     "-f",
     "segment",
     "-segment_time",
-    "600",
+    String(WHISPER_SEGMENT_SECONDS),
+    "-reset_timestamps",
+    "1",
     "-c",
     "copy",
     segmentPattern,
@@ -261,6 +273,12 @@ export async function prepareAudioChunksForWhisper(
   if (files.length === 0) {
     return { paths: [prepared], cleanup };
   }
+
+  console.log(
+    `[transcription] whisper: split ${
+      duration ? `${Math.round(duration)}s / ` : ""
+    }${(size / 1024 / 1024).toFixed(1)} MB audio into ${files.length} parts`,
+  );
 
   cleanup.push(...files);
   return { paths: files, cleanup };

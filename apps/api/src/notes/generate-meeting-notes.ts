@@ -1,20 +1,10 @@
-import { ax } from "@ax-llm/ax";
 import type { MeetingLlmProvider, TranscriptResult } from "@cognium/meet-shared";
-import { openAiMeetingModelUsesResponsesApi, segmentsToPlainText } from "@cognium/meet-shared";
+import { openAiMeetingModelUsesResponsesApi } from "@cognium/meet-shared";
 import type { MeetingLlmConfig } from "../llm/create-meeting-llm.js";
 import { createMeetingLlm, resolveMeetingLlmModel } from "../llm/create-meeting-llm.js";
+import { createAxMeetingNotesExtractors } from "./meeting-notes-ax.js";
+import { generateMeetingNotesWithMapReduce } from "./meeting-notes-mapreduce.js";
 import { generateMeetingNotesWithOpenAiReasoning } from "./generate-meeting-notes-openai-reasoning.js";
-import { MEETING_NOTES_EXTRACTION_RULES } from "./meeting-notes-prompt.js";
-import { buildMeetingNotes } from "./normalize-meeting-notes.js";
-
-const MAX_TRANSCRIPT_CHARS = 90_000;
-
-const meetingNotesGen = ax(
-  `meetingTitle:string, transcript:string -> summary:string, goals:string[], actionItems:json, roadmap:string[], decisions:string[], openQuestions:string[]`,
-  {
-    description: MEETING_NOTES_EXTRACTION_RULES,
-  },
-);
 
 export async function generateMeetingNotes(opts: {
   llmConfig: MeetingLlmConfig;
@@ -41,36 +31,17 @@ export async function generateMeetingNotes(opts: {
   }
 
   const llm = createMeetingLlm(opts.llmConfig, opts.llmProvider, opts.model);
+  const { extract, reduce } = createAxMeetingNotesExtractors(llm, model);
 
-  let text = segmentsToPlainText(opts.transcript.segments);
-  if (text.length > MAX_TRANSCRIPT_CHARS) {
-    text =
-      `[Transcript truncated to the last ${MAX_TRANSCRIPT_CHARS} characters]\n\n` +
-      text.slice(-MAX_TRANSCRIPT_CHARS);
-  }
-
-  const result = await meetingNotesGen.forward(
-    llm,
-    {
-      meetingTitle: opts.meetingTitle?.trim() || "Meeting",
-      transcript: text,
-    },
-    {
-      model,
-    },
-  );
-
-  return buildMeetingNotes({
+  return generateMeetingNotesWithMapReduce({
     recordingId: opts.recordingId,
     meetingTitle: opts.meetingTitle,
     llmModel: model,
-    parsed: {
-      summary: result.summary,
-      goals: result.goals,
-      actionItems: result.actionItems,
-      roadmap: result.roadmap,
-      decisions: result.decisions,
-      openQuestions: result.openQuestions,
+    segments: opts.transcript.segments,
+    extract,
+    reduce,
+    log: (message) => {
+      console.log(`[notes] ${opts.recordingId} ${message}`);
     },
   });
 }
