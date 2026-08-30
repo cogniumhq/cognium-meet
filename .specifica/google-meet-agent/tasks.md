@@ -1,0 +1,26 @@
+- [x] Record audio from an active Google Meet tab
+- [x] Add optional microphone capture
+- [x] Support mixed and dual-track capture modes
+- [x] Persist pending audio in IndexedDB
+- [x] Upload recordings to the local API
+- [x] Compress and chunk large recordings with ffmpeg
+- [x] Transcribe with Whisper
+- [x] Support diarized speaker labels
+- [x] Poll background transcription status
+- [x] Retry failed transcription
+- [x] Generate AI meeting notes
+- [x] Export transcripts as TXT and JSON
+- [x] Export notes as Markdown and JSON
+- [x] Search transcripts and notes
+- [x] Ask questions about one meeting or meeting history
+- [x] Delete recordings and server-side derived data
+- [x] Isolate data by Chrome profile user ID
+- [ ] Add integration tests for upload, ffmpeg preparation, and transcription
+- [ ] Add an in-popup microphone permission prompt before first recording
+- [ ] Add live chunk upload for very long meetings
+- [ ] Add real-time captions
+- [ ] Map diarized speakers to Meet display names
+- [ ] Add a hosted API deployment
+- [ ] Add user accounts and OAuth
+- [ ] Add an optional meeting-bot join flow
+
