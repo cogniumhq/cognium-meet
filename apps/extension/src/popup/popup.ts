@@ -45,10 +45,12 @@ import {
   getHistory,
   getSettings,
   HISTORY_KEY,
+  loadAskSectionOpen,
   loadAskWorkspace,
   MAX_ASK_TABS,
   removeAskTab,
   removeHistoryEntry,
+  saveAskSectionOpen,
   saveHistory,
   saveAskWorkspace,
   setActiveAskTab,
@@ -182,6 +184,11 @@ async function init(): Promise<void> {
     await restoreAskChat();
   } catch (err) {
     console.error("[popup] restore Ask chat failed", err);
+  }
+  try {
+    await restoreAskSectionOpen();
+  } catch (err) {
+    console.error("[popup] restore Ask section open failed", err);
   }
 
   startBtn.addEventListener("click", () => void startRecording());
@@ -468,31 +475,29 @@ function showMainView(): void {
   transcriptView.classList.add("hidden");
   currentTranscript = undefined;
   void applyMeetingAskVisibility();
+  // Refresh history so per-meeting Ask chips match the setting.
+  void renderHistory();
 }
 
 async function applyMeetingAskVisibility(): Promise<void> {
   const settings = await getSettings();
   const enabled = isMeetingAskEnabled(settings);
   meetingAskSection.classList.toggle("hidden", !enabled);
-  if (!enabled) {
-    return;
-  }
-  syncAskSectionOpen();
 }
 
-function setAskSectionOpen(open: boolean): void {
+function setAskSectionOpen(open: boolean, persist = true): void {
   askSectionOpen = open;
   meetingAskBody.classList.toggle("collapsed", !open);
   meetingAskSection.classList.toggle("meeting-ask-section--open", open);
   meetingAskToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  if (persist) {
+    void saveAskSectionOpen(open);
+  }
 }
 
-function syncAskSectionOpen(): void {
-  const hasActivity =
-    askMessages.length > 0 || askLoading || Boolean(askScopeRecordingId) || meetingAsk.value.trim();
-  if (hasActivity) {
-    setAskSectionOpen(true);
-  }
+async function restoreAskSectionOpen(): Promise<void> {
+  const open = await loadAskSectionOpen();
+  setAskSectionOpen(open, false);
 }
 
 function updateAskScopeChrome(): void {
@@ -627,6 +632,10 @@ async function createNewAskTab(opts?: {
 }
 
 async function openAskForRecording(item: StoredRecording): Promise<void> {
+  const settings = await getSettings();
+  if (!isMeetingAskEnabled(settings)) {
+    return;
+  }
   setAskSectionOpen(true);
   await persistActiveTab(askLoading);
   const workspace = await loadAskWorkspace();
@@ -712,7 +721,6 @@ function updateAskChrome(): void {
   meetingAskBtn.classList.toggle("hidden", anyPending);
   meetingAskCancelBtn.classList.toggle("hidden", !anyPending);
   meetingAsk.disabled = anyPending;
-  syncAskSectionOpen();
 }
 
 function scheduleSaveAskChat(): void {
@@ -1837,9 +1845,11 @@ async function renderHistory(): Promise<void> {
       toolbar.appendChild(
         createChipBtn("View transcript", () => void openTranscriptViewer(item), "accent"),
       );
-      toolbar.appendChild(
-        createChipBtn("Ask", () => void openAskForRecording(item), "default"),
-      );
+      if (isMeetingAskEnabled(settings)) {
+        toolbar.appendChild(
+          createChipBtn("Ask", () => void openAskForRecording(item), "default"),
+        );
+      }
 
       if (item.notesStatus === "failed" && item.notesError) {
         const err = document.createElement("div");

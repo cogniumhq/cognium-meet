@@ -3,6 +3,7 @@ import { formatRecordingDurationMs } from "@cognium/meet-shared";
 import type { AskChatState } from "./storage.js";
 
 export const ASK_WORKSPACE_KEY = "meetingAskWorkspace";
+export const ASK_SECTION_OPEN_KEY = "meetingAskSectionOpen";
 export const LEGACY_ASK_CHAT_KEY = "meetingAskChat";
 export const MAX_ASK_TABS = 12;
 

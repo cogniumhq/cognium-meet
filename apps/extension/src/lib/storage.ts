@@ -1,5 +1,6 @@
 import type { ExtensionSettings, MeetingAskMessage, NotesStatus, TranscriptionProgress } from "@cognium/meet-shared";
 import {
+  ASK_SECTION_OPEN_KEY,
   ASK_WORKSPACE_KEY,
   createAskTab,
   defaultAskWorkspace,
@@ -134,6 +135,7 @@ const HISTORY_KEY = "recordingHistory";
 export type { AskChatTab, AskChatWorkspace };
 export {
   addAskTab,
+  ASK_SECTION_OPEN_KEY,
   ASK_WORKSPACE_KEY,
   createAskTab,
   defaultAskWorkspace,
@@ -156,6 +158,15 @@ export interface AskChatState {
   draftInput?: string;
   /** True while the API call is in flight (survives popup close). */
   pending?: boolean;
+}
+
+export async function loadAskSectionOpen(): Promise<boolean> {
+  const result = await chrome.storage.local.get(ASK_SECTION_OPEN_KEY);
+  return result[ASK_SECTION_OPEN_KEY] === true;
+}
+
+export async function saveAskSectionOpen(open: boolean): Promise<void> {
+  await chrome.storage.local.set({ [ASK_SECTION_OPEN_KEY]: open });
 }
 
 export async function loadAskWorkspace(): Promise<AskChatWorkspace> {
