@@ -53,5 +53,20 @@ export function formatMeetingLlmError(
     }
   }
 
+  if (provider === "openrouter") {
+    if (/401|unauthorized|invalid.*api.*key|user not found/i.test(combined)) {
+      return "OpenRouter API key is missing or invalid. Add your key in extension Settings (Meeting AI → OpenRouter).";
+    }
+    if (/402|insufficient.?credits|payment required/i.test(combined)) {
+      return "OpenRouter account has insufficient credits. Add credits at openrouter.ai or choose a free model.";
+    }
+    if (/model.*not found|does not exist|404/i.test(combined)) {
+      return `OpenRouter model "${model}" is not available. Choose another model in extension Settings (use provider/model ids, e.g. openai/gpt-4o-mini).`;
+    }
+    if (/400|bad request/i.test(combined)) {
+      return `OpenRouter rejected the request for model "${model}": ${message}`;
+    }
+  }
+
   return message || "Meeting AI request failed";
 }

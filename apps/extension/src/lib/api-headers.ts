@@ -1,13 +1,23 @@
-import { COGNIUM_USER_ID_HEADER, OPENAI_API_KEY_HEADER } from "@cognium/meet-shared";
-import { getOrCreateUserId, getOpenAiApiKey, getSettings } from "./storage.js";
+import {
+  COGNIUM_USER_ID_HEADER,
+  OPENAI_API_KEY_HEADER,
+  OPENROUTER_API_KEY_HEADER,
+} from "@cognium/meet-shared";
+import {
+  getOrCreateUserId,
+  getOpenAiApiKey,
+  getOpenRouterApiKey,
+  getSettings,
+} from "./storage.js";
 
 export async function buildApiHeaders(
   extra?: Record<string, string>,
 ): Promise<Record<string, string>> {
-  const [settings, userId, openaiApiKey] = await Promise.all([
+  const [settings, userId, openaiApiKey, openRouterApiKey] = await Promise.all([
     getSettings(),
     getOrCreateUserId(),
     getOpenAiApiKey(),
+    getOpenRouterApiKey(),
   ]);
   const headers: Record<string, string> = {
     [COGNIUM_USER_ID_HEADER]: userId,
@@ -18,6 +28,9 @@ export async function buildApiHeaders(
   }
   if (openaiApiKey) {
     headers[OPENAI_API_KEY_HEADER] = openaiApiKey;
+  }
+  if (openRouterApiKey) {
+    headers[OPENROUTER_API_KEY_HEADER] = openRouterApiKey;
   }
   return headers;
 }

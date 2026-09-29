@@ -1292,6 +1292,26 @@ function meetingLlmModelShortLabel(model: string): string {
       return "4.1";
     case "gpt-5.5":
       return "5.5";
+    case "openai/gpt-4o-mini":
+      return "OR 4o mini";
+    case "openai/gpt-4o":
+      return "OR 4o";
+    case "openai/gpt-4.1-mini":
+      return "OR 4.1 mini";
+    case "openai/gpt-4.1":
+      return "OR 4.1";
+    case "anthropic/claude-sonnet-4":
+      return "Claude 4";
+    case "anthropic/claude-3.5-sonnet":
+      return "Claude 3.5";
+    case "google/gemini-2.5-flash":
+      return "Gem 2.5";
+    case "google/gemini-2.0-flash-001":
+      return "Gem 2.0";
+    case "meta-llama/llama-3.3-70b-instruct":
+      return "Llama 3.3";
+    case "deepseek/deepseek-chat":
+      return "DeepSeek";
     default:
       return model.length > 14 ? `${model.slice(0, 12)}…` : model;
   }

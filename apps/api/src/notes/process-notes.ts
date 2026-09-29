@@ -8,13 +8,15 @@ import { ensureOllamaModelAvailable } from "../llm/ollama-client.js";
 import type { RecordingStore } from "../storage/recording-store.js";
 import type { UserStoreRegistry } from "../storage/user-store-registry.js";
 import { recordingMeetingSettings } from "../parse-client-settings.js";
-import { requireOpenAiApiKey } from "../resolve-openai-key.js";
+import { requireOpenAiApiKey, requireOpenRouterApiKey } from "../resolve-openai-key.js";
 import { generateMeetingNotes } from "./generate-meeting-notes.js";
 
 export interface NotesProcessingDeps {
   userRegistry: UserStoreRegistry;
   /** Server fallback when the client does not send a key. */
   openaiApiKey?: string;
+  /** Server fallback for OpenRouter notes/Ask when the client does not send a key. */
+  openRouterApiKey?: string;
 }
 
 const activeNotesJobs = new Set<string>();
@@ -104,6 +106,7 @@ async function processMeetingNotes(
   const clientSettings = recordingMeetingSettings(meta);
   const llmProvider = clientSettings.meetingLlmProvider;
   let openaiKey: string | undefined;
+  let openRouterKey: string | undefined;
   if (llmProvider === "openai") {
     try {
       openaiKey = requireOpenAiApiKey({
@@ -119,10 +122,26 @@ async function processMeetingNotes(
       return;
     }
   }
+  if (llmProvider === "openrouter") {
+    try {
+      openRouterKey = requireOpenRouterApiKey({
+        storedKey: meta.openRouterApiKey,
+        serverKey: deps.openRouterApiKey,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await saveNotesMeta(store, meta, {
+        notesStatus: "failed",
+        notesError: message,
+      });
+      return;
+    }
+  }
   const llmConfig = meetingLlmConfigFromFields(openaiKey ?? "", {
     meetingLlmProvider: clientSettings.meetingLlmProvider,
     ollamaUrl: clientSettings.ollamaUrl,
     ollamaModel: clientSettings.ollamaModel,
+    openRouterApiKey: openRouterKey,
   });
   const notesModel = resolveMeetingLlmModel(
     llmConfig,

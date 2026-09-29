@@ -310,9 +310,9 @@ export async function regenerateMeetingNotes(
     method: "POST",
     headers,
     body: JSON.stringify({
-      meetingNotesEnabled: true,
       ...meetingSettingsFormFields(settings),
       ...opts,
+      meetingNotesEnabled: true,
     }),
   });
   if (!response.ok) {

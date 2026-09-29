@@ -1,3 +1,7 @@
+.hidden {
+  display: none;
+}
+
 .settings-panel {
   display: flex;
   flex-direction: column;
@@ -87,6 +91,17 @@
   line-height: 1.4;
 }
 
+
+.field-hint a {
+  color: #93c5fd;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.field-hint a:hover {
+  color: #bfdbfe;
+}
+
 .field-hint code {
   font-size: 10px;
 }
@@ -165,6 +180,10 @@
   align-items: center;
   gap: 10px 12px;
   margin-top: 8px;
+}
+
+.settings-save-row {
+  margin: 12px 0 16px;
 }
 
 .field-status {
@@ -335,6 +354,15 @@ body.options-page .mic-btn:hover {
 body.options-page .mic-badge--unknown {
   background: #e2e8f0;
   color: #475569;
+}
+
+
+body.options-page .field-hint a {
+  color: #1d4ed8;
+}
+
+body.options-page .field-hint a:hover {
+  color: #1e40af;
 }
 
 body.options-page .back-link {

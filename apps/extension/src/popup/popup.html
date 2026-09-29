@@ -177,8 +177,7 @@
           <section class="settings-card">
             <h3>API connection</h3>
             <p>
-              API URL and token identify your Cognium Meet server. Your OpenAI key is stored
-              locally on this device (not synced) and sent to the API only when needed.
+              API URL and token identify your Cognium Meet server.
             </p>
 
             <div class="field">
@@ -195,47 +194,7 @@
                 </button>
               </div>
             </div>
-
-            <div class="field">
-              <label for="openai-api-key">OpenAI API key</label>
-              <p class="field-hint">
-                Required for transcription and for notes/Ask when using OpenAI. Optional if your
-                server has <code>OPENAI_API_KEY</code> set.
-              </p>
-              <div class="token-row">
-                <input
-                  id="openai-api-key"
-                  type="password"
-                  placeholder="sk-…"
-                  autocomplete="off"
-                />
-                <button id="openai-key-toggle" type="button" class="token-toggle" aria-pressed="false">
-                  Show
-                </button>
-              </div>
-            </div>
-
-            <p class="settings-note">
-              Click <strong>Save API Settings</strong> after editing URL, token, or OpenAI key.
-              All other settings on this page save automatically when changed.
-            </p>
-            <div class="connection-save-row">
-              <button
-                id="save-settings-btn"
-                type="button"
-                class="save-settings-btn"
-                disabled
-              >
-                Save API Settings
-              </button>
-              <p
-                id="connection-save-status"
-                class="field-status hidden"
-                role="status"
-                aria-live="polite"
-              ></p>
-            </div>
-          </section>
+</section>
 
           <section class="settings-card">
             <h3>Recording</h3>
@@ -250,6 +209,9 @@
           <section class="settings-card">
             <h3>Transcription</h3>
             <p>Choose speed vs speaker labels. Requires an OpenAI key (extension or server).</p>
+            <p class="field-hint">
+              Transcription uses your saved OpenAI API key (set it under Meeting AI → OpenAI).
+            </p>
             <p id="dual-track-note" class="settings-note hidden">
               Dual-track uses Whisper only — speakers are labeled <strong>You</strong> (mic) and <strong>Others</strong> (tab).
             </p>
@@ -262,7 +224,10 @@
 
           <section class="settings-card">
             <h3>Meeting AI &amp; storage</h3>
-            <p>Provider and model for notes and Ask. Changes here save automatically.</p>
+            <p>
+              Provider, model, and API keys for notes, Ask, and transcription. Click
+              <strong>Save settings</strong> after editing.
+            </p>
             <p
               id="meeting-ai-status"
               class="field-status hidden"
@@ -280,6 +245,29 @@
               <select id="meeting-llm-model"></select>
             </div>
 
+            <div id="openai-fields">
+              <div class="field">
+                <label for="openai-api-key">OpenAI API key</label>
+                <p class="field-hint">
+                  Used for notes/Ask when Meeting AI provider is OpenAI. Also used for
+                  transcription (key stays saved if you switch providers). Get a key at
+                  <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">OpenAI API keys</a>. Stored locally on this device (not synced) and sent to the API only when needed.
+                  Optional if your server has <code>OPENAI_API_KEY</code> set.
+                </p>
+                <div class="token-row">
+                  <input
+                    id="openai-api-key"
+                    type="password"
+                    placeholder="sk-…"
+                    autocomplete="off"
+                  />
+                  <button id="openai-key-toggle" type="button" class="token-toggle" aria-pressed="false">
+                    Show
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <div id="ollama-fields">
               <div class="field">
                 <label for="ollama-url">Ollama URL</label>
@@ -288,6 +276,35 @@
                   type="url"
                   placeholder="http://localhost:11434"
                 />
+              </div>
+            </div>
+
+            <div id="openrouter-fields" class="hidden">
+              <div class="field">
+                <label for="openrouter-api-key">OpenRouter API key</label>
+                <p class="field-hint">
+                  Required for notes/Ask when Meeting AI provider is OpenRouter.
+                  Get a key at
+                  <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">OpenRouter keys</a>. Stored locally on this device (not synced). Optional if your server has
+                  <code>OPENROUTER_API_KEY</code> set. Base URL is
+                  <code>https://openrouter.ai/api/v1</code>.
+                </p>
+                <div class="token-row">
+                  <input
+                    id="openrouter-api-key"
+                    type="password"
+                    placeholder="sk-or-…"
+                    autocomplete="off"
+                  />
+                  <button
+                    id="openrouter-key-toggle"
+                    type="button"
+                    class="token-toggle"
+                    aria-pressed="false"
+                  >
+                    Show
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -317,6 +334,24 @@
               <input id="max-upload-mb" type="number" min="1" max="200" step="1" />
             </div>
           </section>
+
+
+          <div class="connection-save-row settings-save-row">
+            <button
+              id="save-settings-btn"
+              type="button"
+              class="save-settings-btn"
+              disabled
+            >
+              Save settings
+            </button>
+            <p
+              id="settings-save-status"
+              class="field-status hidden"
+              role="status"
+              aria-live="polite"
+            ></p>
+          </div>
 
           <section class="settings-card">
             <h3>Microphone</h3>

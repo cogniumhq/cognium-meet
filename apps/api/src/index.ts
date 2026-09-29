@@ -12,10 +12,16 @@ const port = Number.parseInt(process.env.PORT ?? "3847", 10);
 const storageDir = process.env.STORAGE_DIR ?? join(process.cwd(), "../../storage");
 const apiToken = process.env.API_TOKEN;
 const openaiKey = process.env.OPENAI_API_KEY?.trim() || undefined;
+const openRouterKey = process.env.OPENROUTER_API_KEY?.trim() || undefined;
 
 if (!openaiKey) {
   console.warn(
     "OPENAI_API_KEY is not set — transcription and OpenAI notes/Ask require clients to send X-OpenAI-Key.",
+  );
+}
+if (!openRouterKey) {
+  console.warn(
+    "OPENROUTER_API_KEY is not set — OpenRouter notes/Ask require clients to send X-OpenRouter-Key.",
   );
 }
 
@@ -27,6 +33,7 @@ const deps = {
   getTranscriptionProvider,
   defaultTranscriptionModel: DEFAULT_TRANSCRIPTION_MODEL,
   openaiApiKey: openaiKey,
+  openRouterApiKey: openRouterKey,
   apiToken,
 };
 
@@ -37,6 +44,9 @@ serve({ fetch: app.fetch, port }, () => {
   console.log(`Default transcription model: ${DEFAULT_TRANSCRIPTION_MODEL}`);
   console.log(
     `OpenAI key: ${openaiKey ? "server fallback configured" : "extension BYOK only"}`,
+  );
+  console.log(
+    `OpenRouter key: ${openRouterKey ? "server fallback configured" : "extension BYOK only"}`,
   );
   console.log("Meeting AI, upload limits, and storage options come from extension Settings.");
   console.log("Per-user storage: storage/users/<chrome-profile-uuid>/");

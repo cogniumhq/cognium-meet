@@ -34,6 +34,7 @@ import { getChromeAccountKey } from "./chrome-identity.js";
 const SETTINGS_KEY = "settings";
 const USER_ID_KEY = "cogniumUserId";
 const OPENAI_KEY_STORAGE_KEY = "openaiApiKey";
+const OPENROUTER_KEY_STORAGE_KEY = "openRouterApiKey";
 
 const DEFAULT_SETTINGS: ExtensionSettings = {
   apiUrl: DEFAULT_API_URL,
@@ -73,6 +74,22 @@ export async function saveOpenAiApiKey(key: string | undefined): Promise<void> {
     await chrome.storage.local.set({ [OPENAI_KEY_STORAGE_KEY]: trimmed });
   } else {
     await chrome.storage.local.remove(OPENAI_KEY_STORAGE_KEY);
+  }
+}
+
+/** User's OpenRouter key — local only (not synced across Chrome profiles). */
+export async function getOpenRouterApiKey(): Promise<string | undefined> {
+  const result = await chrome.storage.local.get(OPENROUTER_KEY_STORAGE_KEY);
+  const key = result[OPENROUTER_KEY_STORAGE_KEY];
+  return typeof key === "string" && key.trim() ? key.trim() : undefined;
+}
+
+export async function saveOpenRouterApiKey(key: string | undefined): Promise<void> {
+  const trimmed = key?.trim();
+  if (trimmed) {
+    await chrome.storage.local.set({ [OPENROUTER_KEY_STORAGE_KEY]: trimmed });
+  } else {
+    await chrome.storage.local.remove(OPENROUTER_KEY_STORAGE_KEY);
   }
 }
 

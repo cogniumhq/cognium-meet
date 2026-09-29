@@ -3,13 +3,14 @@ import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
 import { readFile } from "node:fs/promises";
 import { v4 as uuidv4 } from "uuid";
-import { COGNIUM_USER_ID_HEADER, OPENAI_API_KEY_HEADER, type RecordingMeta } from "@cognium/meet-shared";
+import { COGNIUM_USER_ID_HEADER, OPENAI_API_KEY_HEADER, OPENROUTER_API_KEY_HEADER, type RecordingMeta } from "@cognium/meet-shared";
 import {
   ABSOLUTE_MAX_UPLOAD_BYTES,
   DEFAULT_OLLAMA_URL,
   maxUploadBytesFromMb,
   parseAudioCaptureMode,
   parseOpenAiKeyHeader,
+  parseOpenRouterKeyHeader,
   parseTranscriptionModel,
   publicRecordingMeta,
 } from "@cognium/meet-shared";
@@ -49,7 +50,7 @@ import {
   parseMeetingAskClientSettings,
   recordingMeetingSettings,
 } from "./parse-client-settings.js";
-import { requireOpenAiApiKey } from "./resolve-openai-key.js";
+import { requireOpenAiApiKey, requireOpenRouterApiKey } from "./resolve-openai-key.js";
 
 type AppVariables = {
   userId: string;
@@ -86,6 +87,7 @@ export function createApp(deps: AppDeps) {
         "Content-Type",
         COGNIUM_USER_ID_HEADER,
         OPENAI_API_KEY_HEADER,
+        OPENROUTER_API_KEY_HEADER,
       ],
       allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
     }),
@@ -184,7 +186,11 @@ export function createApp(deps: AppDeps) {
 
     const llmProvider = clientSettings.meetingLlmProvider;
     const requestOpenAiKey = parseOpenAiKeyHeader(c.req.header(OPENAI_API_KEY_HEADER));
+    const requestOpenRouterKey = parseOpenRouterKeyHeader(
+      c.req.header(OPENROUTER_API_KEY_HEADER),
+    );
     let openaiKey = "";
+    let openRouterKey = "";
     if (llmProvider === "openai") {
       try {
         openaiKey = requireOpenAiApiKey({
@@ -197,10 +203,23 @@ export function createApp(deps: AppDeps) {
         return c.json({ error: message }, 400);
       }
     }
+    if (llmProvider === "openrouter") {
+      try {
+        openRouterKey = requireOpenRouterApiKey({
+          requestKey: requestOpenRouterKey,
+          storedKey: recordingMeta?.openRouterApiKey,
+          serverKey: deps.openRouterApiKey,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return c.json({ error: message }, 400);
+      }
+    }
     const llmConfig = meetingLlmConfigFromFields(openaiKey, {
       meetingLlmProvider: clientSettings.meetingLlmProvider,
       ollamaUrl: clientSettings.ollamaUrl,
       ollamaModel: clientSettings.ollamaModel,
+      openRouterApiKey: openRouterKey,
     });
     const askModel = resolveMeetingLlmModel(
       llmConfig,
@@ -399,6 +418,9 @@ export function createApp(deps: AppDeps) {
       }
 
       const requestOpenAiKey = parseOpenAiKeyHeader(c.req.header(OPENAI_API_KEY_HEADER));
+      const requestOpenRouterKey = parseOpenRouterKeyHeader(
+        c.req.header(OPENROUTER_API_KEY_HEADER),
+      );
       try {
         requireOpenAiApiKey({
           requestKey: requestOpenAiKey,
@@ -407,6 +429,17 @@ export function createApp(deps: AppDeps) {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return c.json({ error: message }, 400);
+      }
+      if (clientSettings.meetingLlmProvider === "openrouter") {
+        try {
+          requireOpenRouterApiKey({
+            requestKey: requestOpenRouterKey,
+            serverKey: deps.openRouterApiKey,
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return c.json({ error: message }, 400);
+        }
       }
 
       const id = uuidv4();
@@ -425,6 +458,7 @@ export function createApp(deps: AppDeps) {
         captureMode,
         ...clientSettingsToRecordingFields(clientSettings),
         ...(requestOpenAiKey ? { openaiApiKey: requestOpenAiKey } : {}),
+        ...(requestOpenRouterKey ? { openRouterApiKey: requestOpenRouterKey } : {}),
         processingStartedAt: new Date().toISOString(),
         notesStatus: clientSettings.meetingNotesEnabled ? "pending" : "skipped",
       };
@@ -461,6 +495,9 @@ export function createApp(deps: AppDeps) {
     }
 
     const requestOpenAiKey = parseOpenAiKeyHeader(c.req.header(OPENAI_API_KEY_HEADER));
+    const requestOpenRouterKey = parseOpenRouterKeyHeader(
+      c.req.header(OPENROUTER_API_KEY_HEADER),
+    );
     try {
       requireOpenAiApiKey({
         requestKey: requestOpenAiKey,
@@ -507,6 +544,7 @@ export function createApp(deps: AppDeps) {
       transcriptionModel: retryModel,
       ...clientSettingsToRecordingFields(clientSettings),
       ...(requestOpenAiKey ? { openaiApiKey: requestOpenAiKey } : {}),
+      ...(requestOpenRouterKey ? { openRouterApiKey: requestOpenRouterKey } : {}),
       processingStartedAt: new Date().toISOString(),
       notesStatus: clientSettings.meetingNotesEnabled ? "pending" : "skipped",
       notesError: undefined,
@@ -694,7 +732,8 @@ export function createApp(deps: AppDeps) {
       );
     }
 
-    const body = await c.req.json<Record<string, unknown>>().catch(() => ({}));
+    const body =
+      (await c.req.json<Record<string, unknown>>().catch(() => null)) ?? {};
     if (
       meta.meetingNotesEnabled === false &&
       body.meetingNotesEnabled !== true &&
@@ -710,12 +749,27 @@ export function createApp(deps: AppDeps) {
     });
 
     const requestOpenAiKey = parseOpenAiKeyHeader(c.req.header(OPENAI_API_KEY_HEADER));
+    const requestOpenRouterKey = parseOpenRouterKeyHeader(
+      c.req.header(OPENROUTER_API_KEY_HEADER),
+    );
     if (clientSettings.meetingLlmProvider === "openai") {
       try {
         requireOpenAiApiKey({
           requestKey: requestOpenAiKey,
           storedKey: meta.openaiApiKey,
           serverKey: deps.openaiApiKey,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return c.json({ error: message }, 400);
+      }
+    }
+    if (clientSettings.meetingLlmProvider === "openrouter") {
+      try {
+        requireOpenRouterApiKey({
+          requestKey: requestOpenRouterKey,
+          storedKey: meta.openRouterApiKey,
+          serverKey: deps.openRouterApiKey,
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -730,6 +784,7 @@ export function createApp(deps: AppDeps) {
       notesStatus: "pending",
       notesError: undefined,
       ...(requestOpenAiKey ? { openaiApiKey: requestOpenAiKey } : {}),
+      ...(requestOpenRouterKey ? { openRouterApiKey: requestOpenRouterKey } : {}),
     });
     console.log(
       `[api] notes regenerate user=${userId} id=${id} provider=${clientSettings.meetingLlmProvider} model=${clientSettings.meetingLlmModel}`,

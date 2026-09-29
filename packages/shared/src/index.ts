@@ -116,11 +116,16 @@ export interface RecordingMeta {
    * never returned in API responses.
    */
   openaiApiKey?: string;
+  /**
+   * Per-recording OpenRouter key from extension (BYOK). Stored server-side for async jobs;
+   * never returned in API responses.
+   */
+  openRouterApiKey?: string;
 }
 
 /** Strip server-only fields before returning recording metadata to clients. */
 export function publicRecordingMeta(meta: RecordingMeta): RecordingMeta {
-  const { openaiApiKey: _openaiApiKey, ...rest } = meta;
+  const { openaiApiKey: _openaiApiKey, openRouterApiKey: _openRouterApiKey, ...rest } = meta;
   return rest;
 }
 
@@ -187,12 +192,14 @@ export type MeetingAskCitation = {
 };
 
 export type MeetingAskRole = "user" | "assistant";
-export type MeetingLlmProvider = "openai" | "ollama";
+export type MeetingLlmProvider = "openai" | "openrouter" | "ollama";
 
-export const MEETING_LLM_PROVIDERS = ["openai", "ollama"] as const;
+export const MEETING_LLM_PROVIDERS = ["openai", "openrouter", "ollama"] as const;
 export const DEFAULT_MEETING_LLM_PROVIDER: MeetingLlmProvider = "openai";
 
 export const DEFAULT_MEETING_LLM_MODEL = "gpt-4o-mini";
+export const DEFAULT_OPENROUTER_MODEL = "openai/gpt-4o-mini";
+export const DEFAULT_OPENROUTER_URL = "https://openrouter.ai/api/v1";
 export const DEFAULT_OLLAMA_URL = "http://localhost:11434";
 export const DEFAULT_OLLAMA_MODEL = "qwen2.5:7b";
 
@@ -204,6 +211,19 @@ export const OPENAI_MEETING_LLM_MODELS = [
   "gpt-5.5",
 ] as const;
 
+export const OPENROUTER_MEETING_LLM_MODELS = [
+  "openai/gpt-4o-mini",
+  "openai/gpt-4o",
+  "openai/gpt-4.1-mini",
+  "openai/gpt-4.1",
+  "anthropic/claude-sonnet-4",
+  "anthropic/claude-3.5-sonnet",
+  "google/gemini-2.5-flash",
+  "google/gemini-2.0-flash-001",
+  "meta-llama/llama-3.3-70b-instruct",
+  "deepseek/deepseek-chat",
+] as const;
+
 export const OLLAMA_MEETING_LLM_MODELS = [
   "qwen2.5:7b",
   "llama3.2",
@@ -213,16 +233,29 @@ export const OLLAMA_MEETING_LLM_MODELS = [
 ] as const;
 
 export type OpenAiMeetingLlmModel = (typeof OPENAI_MEETING_LLM_MODELS)[number];
+export type OpenRouterMeetingLlmModel = (typeof OPENROUTER_MEETING_LLM_MODELS)[number];
 export type OllamaMeetingLlmModel = (typeof OLLAMA_MEETING_LLM_MODELS)[number];
 
 export function meetingLlmModelsForProvider(
   provider: MeetingLlmProvider,
 ): readonly string[] {
-  return provider === "ollama" ? OLLAMA_MEETING_LLM_MODELS : OPENAI_MEETING_LLM_MODELS;
+  if (provider === "ollama") {
+    return OLLAMA_MEETING_LLM_MODELS;
+  }
+  if (provider === "openrouter") {
+    return OPENROUTER_MEETING_LLM_MODELS;
+  }
+  return OPENAI_MEETING_LLM_MODELS;
 }
 
 export function defaultMeetingLlmModelForProvider(provider: MeetingLlmProvider): string {
-  return provider === "ollama" ? DEFAULT_OLLAMA_MODEL : DEFAULT_MEETING_LLM_MODEL;
+  if (provider === "ollama") {
+    return DEFAULT_OLLAMA_MODEL;
+  }
+  if (provider === "openrouter") {
+    return DEFAULT_OPENROUTER_MODEL;
+  }
+  return DEFAULT_MEETING_LLM_MODEL;
 }
 
 export function meetingLlmModelLabel(model: string): string {
@@ -247,6 +280,26 @@ export function meetingLlmModelLabel(model: string): string {
       return "Phi-3 mini";
     case "gemma2:9b":
       return "Gemma 2 9B";
+    case "openai/gpt-4o-mini":
+      return "OpenAI GPT-4o mini";
+    case "openai/gpt-4o":
+      return "OpenAI GPT-4o";
+    case "openai/gpt-4.1-mini":
+      return "OpenAI GPT-4.1 mini";
+    case "openai/gpt-4.1":
+      return "OpenAI GPT-4.1";
+    case "anthropic/claude-sonnet-4":
+      return "Claude Sonnet 4";
+    case "anthropic/claude-3.5-sonnet":
+      return "Claude 3.5 Sonnet";
+    case "google/gemini-2.5-flash":
+      return "Gemini 2.5 Flash";
+    case "google/gemini-2.0-flash-001":
+      return "Gemini 2.0 Flash";
+    case "meta-llama/llama-3.3-70b-instruct":
+      return "Llama 3.3 70B";
+    case "deepseek/deepseek-chat":
+      return "DeepSeek Chat";
     default:
       return model;
   }
@@ -294,7 +347,9 @@ export function parseMeetingLlmProvider(
   value: unknown,
   fallback: MeetingLlmProvider = DEFAULT_MEETING_LLM_PROVIDER,
 ): MeetingLlmProvider {
-  return value === "openai" || value === "ollama" ? value : fallback;
+  return value === "openai" || value === "openrouter" || value === "ollama"
+    ? value
+    : fallback;
 }
 
 export function looksLikeOpenAiMeetingModel(model: string): boolean {
@@ -331,29 +386,48 @@ export function coerceMeetingLlmModelForProvider(
       ? trimmed
       : defaultMeetingLlmModelForProvider(provider);
   }
+  if (provider === "openrouter") {
+    // OpenRouter model ids are usually "provider/model"; accept any non-empty id.
+    return trimmed;
+  }
   return looksLikeOpenAiMeetingModel(trimmed)
     ? defaultMeetingLlmModelForProvider(provider)
     : trimmed;
 }
 
 export function meetingLlmProviderLabel(provider: MeetingLlmProvider): string {
-  return provider === "ollama" ? "Ollama (local)" : "OpenAI (cloud)";
+  switch (provider) {
+    case "ollama":
+      return "Ollama (local)";
+    case "openrouter":
+      return "OpenRouter (cloud)";
+    case "openai":
+      return "OpenAI (cloud)";
+  }
 }
 
 /** Max wait for Ask LLM completion (API + extension client). */
 export const MEETING_ASK_TIMEOUT_MS_OLLAMA = 60 * 1000;
 export const MEETING_ASK_TIMEOUT_MS_OPENAI = 30 * 1000;
+export const MEETING_ASK_TIMEOUT_MS_OPENROUTER = 45 * 1000;
 
 export function meetingAskTimeoutMs(provider: MeetingLlmProvider): number {
-  return provider === "ollama"
-    ? MEETING_ASK_TIMEOUT_MS_OLLAMA
-    : MEETING_ASK_TIMEOUT_MS_OPENAI;
+  if (provider === "ollama") {
+    return MEETING_ASK_TIMEOUT_MS_OLLAMA;
+  }
+  if (provider === "openrouter") {
+    return MEETING_ASK_TIMEOUT_MS_OPENROUTER;
+  }
+  return MEETING_ASK_TIMEOUT_MS_OPENAI;
 }
 
 export function meetingAskTimeoutMessage(provider: MeetingLlmProvider): string {
   const secs = Math.round(meetingAskTimeoutMs(provider) / 1000);
   if (provider === "ollama") {
-    return `Ollama took too long (over ${secs} seconds). Try OpenAI, a smaller model, or ask a simpler question.`;
+    return `Ollama took too long (over ${secs} seconds). Try OpenAI, OpenRouter, a smaller model, or ask a simpler question.`;
+  }
+  if (provider === "openrouter") {
+    return `OpenRouter Ask timed out after ${secs} seconds. Try again or use a faster model.`;
   }
   return `OpenAI Ask timed out after ${secs} seconds. Try again or use a faster model.`;
 }
@@ -413,8 +487,15 @@ export function formatMeetingAskConversation(messages: MeetingAskMessage[]): str
 export const COGNIUM_USER_ID_HEADER = "X-Cognium-User-Id";
 /** Extension sends the user's OpenAI key; server uses it when OPENAI_API_KEY is unset. */
 export const OPENAI_API_KEY_HEADER = "X-OpenAI-Key";
+/** Extension sends the user's OpenRouter key; server uses it when OPENROUTER_API_KEY is unset. */
+export const OPENROUTER_API_KEY_HEADER = "X-OpenRouter-Key";
 
 export function parseOpenAiKeyHeader(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+export function parseOpenRouterKeyHeader(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
 }
