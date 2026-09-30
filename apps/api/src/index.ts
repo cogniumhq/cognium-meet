@@ -16,17 +16,20 @@ const openRouterKey = process.env.OPENROUTER_API_KEY?.trim() || undefined;
 
 if (!openaiKey) {
   console.warn(
-    "OPENAI_API_KEY is not set — transcription and OpenAI notes/Ask require clients to send X-OpenAI-Key.",
+    "OPENAI_API_KEY is not set — OpenAI transcription and notes/Ask require clients to send X-OpenAI-Key.",
   );
 }
 if (!openRouterKey) {
   console.warn(
-    "OPENROUTER_API_KEY is not set — OpenRouter notes/Ask require clients to send X-OpenRouter-Key.",
+    "OPENROUTER_API_KEY is not set — OpenRouter transcription and notes/Ask require clients to send X-OpenRouter-Key.",
   );
 }
 
 const userRegistry = new UserStoreRegistry(storageDir);
-const getTranscriptionProvider = createTranscriptionProviderFactory(openaiKey);
+const getTranscriptionProvider = createTranscriptionProviderFactory({
+  openaiApiKey: openaiKey,
+  openRouterApiKey: openRouterKey,
+});
 
 const deps = {
   userRegistry,

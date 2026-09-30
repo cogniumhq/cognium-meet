@@ -7,12 +7,14 @@ import { COGNIUM_USER_ID_HEADER, OPENAI_API_KEY_HEADER, OPENROUTER_API_KEY_HEADE
 import {
   ABSOLUTE_MAX_UPLOAD_BYTES,
   DEFAULT_OLLAMA_URL,
+  coerceTranscriptionModelForProvider,
+  effectiveTranscriptionProvider,
   maxUploadBytesFromMb,
   parseAudioCaptureMode,
   parseOpenAiKeyHeader,
   parseOpenRouterKeyHeader,
-  parseTranscriptionModel,
   publicRecordingMeta,
+  type TranscriptionModel,
 } from "@cognium/meet-shared";
 import type { RecordingStore } from "./storage/recording-store.js";
 import type { SearchIndex } from "./storage/search-index.js";
@@ -302,7 +304,7 @@ export function createApp(deps: AppDeps) {
       let meetingTitle: string | undefined;
       let startedAt: string;
       let durationMs: number | undefined;
-      let transcriptionModel = deps.defaultTranscriptionModel;
+      let transcriptionModel: TranscriptionModel = deps.defaultTranscriptionModel;
       let captureMode = deps.defaultCaptureMode ?? "mixed";
       let clientSettings = parseClientMeetingSettings({});
 
@@ -325,10 +327,10 @@ export function createApp(deps: AppDeps) {
           typeof form.durationMs === "string"
             ? Number.parseInt(form.durationMs, 10)
             : undefined;
-        transcriptionModel = parseTranscriptionModel(
-          form.transcriptionModel,
-          deps.defaultTranscriptionModel,
-        );
+        transcriptionModel =
+          typeof form.transcriptionModel === "string" && form.transcriptionModel.trim()
+            ? (form.transcriptionModel.trim() as TranscriptionModel)
+            : deps.defaultTranscriptionModel;
         captureMode = parseAudioCaptureMode(
           form.captureMode,
           deps.defaultCaptureMode ?? "mixed",
@@ -376,10 +378,10 @@ export function createApp(deps: AppDeps) {
         meetingTitle = body.meetingTitle;
         startedAt = body.startedAt ?? new Date().toISOString();
         durationMs = body.durationMs;
-        transcriptionModel = parseTranscriptionModel(
-          body.transcriptionModel,
-          deps.defaultTranscriptionModel,
-        );
+        transcriptionModel =
+          typeof body.transcriptionModel === "string" && body.transcriptionModel.trim()
+            ? (body.transcriptionModel.trim() as TranscriptionModel)
+            : deps.defaultTranscriptionModel;
         captureMode = parseAudioCaptureMode(
           body.captureMode,
           deps.defaultCaptureMode ?? "mixed",
@@ -421,25 +423,33 @@ export function createApp(deps: AppDeps) {
       const requestOpenRouterKey = parseOpenRouterKeyHeader(
         c.req.header(OPENROUTER_API_KEY_HEADER),
       );
+
+      const transcriptionProvider = effectiveTranscriptionProvider(
+        clientSettings.meetingLlmProvider,
+      );
+      const dualTrackUpload =
+        captureMode === "dual-track" && Boolean(micBuffer);
+      transcriptionModel = coerceTranscriptionModelForProvider(
+        clientSettings.meetingLlmProvider,
+        transcriptionModel,
+        { dualTrack: dualTrackUpload },
+      );
+
       try {
-        requireOpenAiApiKey({
-          requestKey: requestOpenAiKey,
-          serverKey: deps.openaiApiKey,
-        });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return c.json({ error: message }, 400);
-      }
-      if (clientSettings.meetingLlmProvider === "openrouter") {
-        try {
+        if (transcriptionProvider === "openrouter") {
           requireOpenRouterApiKey({
             requestKey: requestOpenRouterKey,
             serverKey: deps.openRouterApiKey,
           });
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          return c.json({ error: message }, 400);
+        } else {
+          requireOpenAiApiKey({
+            requestKey: requestOpenAiKey,
+            serverKey: deps.openaiApiKey,
+          });
         }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return c.json({ error: message }, 400);
       }
 
       const id = uuidv4();
@@ -455,6 +465,7 @@ export function createApp(deps: AppDeps) {
         durationMs: Number.isFinite(durationMs) ? durationMs : undefined,
         status: "processing",
         transcriptionModel,
+        transcriptionProvider,
         captureMode,
         ...clientSettingsToRecordingFields(clientSettings),
         ...(requestOpenAiKey ? { openaiApiKey: requestOpenAiKey } : {}),
@@ -467,7 +478,7 @@ export function createApp(deps: AppDeps) {
       enqueueTranscription(deps, userId, id);
 
       console.log(
-        `[api] recording created user=${userId} id=${id} bytes=${buffer.length} mic=${micBuffer?.length ?? 0} capture=${captureMode} model=${transcriptionModel} title=${meetingTitle ?? "(none)"}`,
+        `[api] recording created user=${userId} id=${id} bytes=${buffer.length} mic=${micBuffer?.length ?? 0} capture=${captureMode} provider=${transcriptionProvider} model=${transcriptionModel} title=${meetingTitle ?? "(none)"}`,
       );
 
       return c.json({ id, status: meta.status }, 202);
@@ -498,16 +509,6 @@ export function createApp(deps: AppDeps) {
     const requestOpenRouterKey = parseOpenRouterKeyHeader(
       c.req.header(OPENROUTER_API_KEY_HEADER),
     );
-    try {
-      requireOpenAiApiKey({
-        requestKey: requestOpenAiKey,
-        storedKey: meta.openaiApiKey,
-        serverKey: deps.openaiApiKey,
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return c.json({ error: message }, 400);
-    }
 
     if (!(await store.audioExists(id))) {
       return c.json(
@@ -519,15 +520,12 @@ export function createApp(deps: AppDeps) {
       );
     }
 
-    let retryModel = meta.transcriptionModel ?? deps.defaultTranscriptionModel;
+    let retryModel: TranscriptionModel = meta.transcriptionModel ?? deps.defaultTranscriptionModel;
     let clientSettings = recordingMeetingSettings(meta);
     try {
       const body = await c.req.json<Record<string, unknown>>();
-      if (body.transcriptionModel) {
-        retryModel = parseTranscriptionModel(
-          body.transcriptionModel,
-          deps.defaultTranscriptionModel,
-        );
+      if (typeof body.transcriptionModel === "string" && body.transcriptionModel.trim()) {
+        retryModel = body.transcriptionModel.trim() as TranscriptionModel;
       }
       clientSettings = parseClientMeetingSettings({
         ...clientSettings,
@@ -537,11 +535,42 @@ export function createApp(deps: AppDeps) {
       // empty body is fine — use stored model
     }
 
+    const transcriptionProvider = effectiveTranscriptionProvider(
+      clientSettings.meetingLlmProvider,
+    );
+    const dualTrackRetry =
+      meta.captureMode === "dual-track" && (await store.micAudioExists(id));
+    retryModel = coerceTranscriptionModelForProvider(
+      clientSettings.meetingLlmProvider,
+      retryModel,
+      { dualTrack: dualTrackRetry },
+    );
+
+    try {
+      if (transcriptionProvider === "openrouter") {
+        requireOpenRouterApiKey({
+          requestKey: requestOpenRouterKey,
+          storedKey: meta.openRouterApiKey,
+          serverKey: deps.openRouterApiKey,
+        });
+      } else {
+        requireOpenAiApiKey({
+          requestKey: requestOpenAiKey,
+          storedKey: meta.openaiApiKey,
+          serverKey: deps.openaiApiKey,
+        });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, 400);
+    }
+
     await store.saveMeta({
       ...meta,
       status: "processing",
       error: undefined,
       transcriptionModel: retryModel,
+      transcriptionProvider,
       ...clientSettingsToRecordingFields(clientSettings),
       ...(requestOpenAiKey ? { openaiApiKey: requestOpenAiKey } : {}),
       ...(requestOpenRouterKey ? { openRouterApiKey: requestOpenRouterKey } : {}),
@@ -551,7 +580,9 @@ export function createApp(deps: AppDeps) {
     });
 
     enqueueTranscription(deps, userId, id);
-    console.log(`[api] transcription retry user=${userId} id=${id} model=${retryModel}`);
+    console.log(
+      `[api] transcription retry user=${userId} id=${id} provider=${transcriptionProvider} model=${retryModel}`,
+    );
     return c.json({ id, status: "processing" }, 202);
   });
 

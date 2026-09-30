@@ -195,7 +195,42 @@ describe("parseTranscriptionModel", () => {
     expect(parseTranscriptionModel("gpt-4o-transcribe-diarize")).toBe(
       "gpt-4o-transcribe-diarize",
     );
+    expect(parseTranscriptionModel("openai/whisper-large-v3-turbo")).toBe(
+      "openai/whisper-large-v3-turbo",
+    );
     expect(parseTranscriptionModel("invalid", "whisper-1")).toBe("whisper-1");
+  });
+});
+
+describe("transcription provider helpers", () => {
+  it("maps meeting AI provider to STT backend", async () => {
+    const {
+      effectiveTranscriptionProvider,
+      coerceTranscriptionModelForProvider,
+      defaultTranscriptionModelForProvider,
+      dualTrackTranscriptionModelForProvider,
+      transcriptionModelsForProvider,
+    } = await import("./index.js");
+    expect(effectiveTranscriptionProvider("openai")).toBe("openai");
+    expect(effectiveTranscriptionProvider("openrouter")).toBe("openrouter");
+    expect(effectiveTranscriptionProvider("ollama")).toBe("openai");
+    expect(defaultTranscriptionModelForProvider("openrouter")).toBe(
+      "openai/whisper-large-v3-turbo",
+    );
+    expect(dualTrackTranscriptionModelForProvider("openrouter")).toBe(
+      "openai/whisper-large-v3-turbo",
+    );
+    expect(dualTrackTranscriptionModelForProvider("openai")).toBe("whisper-1");
+    expect(
+      coerceTranscriptionModelForProvider("openrouter", "gpt-4o-transcribe-diarize"),
+    ).toBe("openai/whisper-large-v3-turbo");
+    expect(coerceTranscriptionModelForProvider("openai", "whisper-1")).toBe("whisper-1");
+    expect(transcriptionModelsForProvider("openrouter")).toContain(
+      "deepgram/nova-3",
+    );
+    expect(transcriptionModelsForProvider("ollama")).toEqual(
+      transcriptionModelsForProvider("openai"),
+    );
   });
 });
 

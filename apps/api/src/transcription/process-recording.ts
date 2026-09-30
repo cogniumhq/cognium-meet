@@ -1,10 +1,14 @@
 import {
+  coerceTranscriptionModelForProvider,
+  dualTrackTranscriptionModelForProvider,
+  effectiveTranscriptionProvider,
   mergeTranscriptionProgress,
   segmentsToPlainText,
   type RecordingMeta,
   type TranscriptResult,
   type TranscriptionModel,
   type TranscriptionProgress,
+  type TranscriptionProvider as TranscriptionProviderId,
 } from "@cognium/meet-shared";
 import type { TranscriptionProvider } from "./provider.js";
 import type { RecordingStore } from "../storage/recording-store.js";
@@ -15,7 +19,7 @@ import {
   SPEAKER_YOU,
 } from "./merge-segments.js";
 import { enqueueMeetingNotes, type NotesProcessingDeps } from "../notes/process-notes.js";
-import { requireOpenAiApiKey } from "../resolve-openai-key.js";
+import { requireOpenAiApiKey, requireOpenRouterApiKey } from "../resolve-openai-key.js";
 
 async function saveProgress(
   store: RecordingStore,
@@ -39,8 +43,16 @@ export interface ProcessingDeps extends NotesProcessingDeps {
   getTranscriptionProvider: (
     model: TranscriptionModel,
     apiKey?: string,
+    providerId?: TranscriptionProviderId,
   ) => TranscriptionProvider;
   defaultTranscriptionModel: TranscriptionModel;
+}
+
+function resolveStoredTranscriptionProvider(meta: RecordingMeta): TranscriptionProviderId {
+  if (meta.transcriptionProvider === "openai" || meta.transcriptionProvider === "openrouter") {
+    return meta.transcriptionProvider;
+  }
+  return effectiveTranscriptionProvider(meta.meetingLlmProvider);
 }
 
 const PROCESSING_STALE_MS = 90 * 60 * 1000;
@@ -141,14 +153,26 @@ export async function processRecording(
 
   const dualTrack =
     meta.captureMode === "dual-track" && (await store.micAudioExists(id));
+  const sttProvider = resolveStoredTranscriptionProvider(meta);
   const model = dualTrack
-    ? "whisper-1"
-    : (meta.transcriptionModel ?? deps.defaultTranscriptionModel);
-  const openaiKey = requireOpenAiApiKey({
-    storedKey: meta.openaiApiKey,
-    serverKey: deps.openaiApiKey,
-  });
-  const transcription = deps.getTranscriptionProvider(model, openaiKey);
+    ? dualTrackTranscriptionModelForProvider(sttProvider)
+    : coerceTranscriptionModelForProvider(
+        meta.meetingLlmProvider ?? sttProvider,
+        meta.transcriptionModel ?? deps.defaultTranscriptionModel,
+      );
+
+  const apiKey =
+    sttProvider === "openrouter"
+      ? requireOpenRouterApiKey({
+          storedKey: meta.openRouterApiKey,
+          serverKey: deps.openRouterApiKey,
+        })
+      : requireOpenAiApiKey({
+          storedKey: meta.openaiApiKey,
+          serverKey: deps.openaiApiKey,
+        });
+
+  const transcription = deps.getTranscriptionProvider(model, apiKey, sttProvider);
 
   await store.saveMeta({
     ...meta,
@@ -156,18 +180,23 @@ export async function processRecording(
     error: undefined,
     processingStartedAt: new Date().toISOString(),
     transcriptionModel: model,
+    transcriptionProvider: sttProvider,
     notesStatus: meta.meetingNotesEnabled === false ? "skipped" : "pending",
     notesError: undefined,
   });
 
   console.log(
-    `[transcription] started user=${userId} id=${id} model=${model} capture=${meta.captureMode ?? "mixed"} dual=${dualTrack} title=${meta.meetingTitle ?? "(none)"}`,
+    `[transcription] started user=${userId} id=${id} provider=${sttProvider} model=${model} capture=${meta.captureMode ?? "mixed"} dual=${dualTrack} title=${meta.meetingTitle ?? "(none)"}`,
   );
 
   const result = dualTrack
     ? await transcribeDualTrack(
         store,
-        deps.getTranscriptionProvider("whisper-1", openaiKey),
+        deps.getTranscriptionProvider(
+          dualTrackTranscriptionModelForProvider(sttProvider),
+          apiKey,
+          sttProvider,
+        ),
         id,
         meta,
       )
@@ -203,13 +232,14 @@ export async function processRecording(
     processingStartedAt: undefined,
     progress: undefined,
     transcriptionModel: model,
+    transcriptionProvider: sttProvider,
     notesStatus: meta.meetingNotesEnabled === false ? "skipped" : "pending",
     notesError: undefined,
   };
   await store.saveMeta(completed);
 
   console.log(
-    `[transcription] completed user=${userId} id=${id} segments=${result.segments.length} language=${result.language ?? "?"}`,
+    `[transcription] completed user=${userId} id=${id} provider=${sttProvider} segments=${result.segments.length} language=${result.language ?? "?"}`,
   );
 
   enqueueMeetingNotes(deps, userId, id);

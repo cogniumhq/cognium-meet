@@ -87,8 +87,10 @@ export interface RecordingMeta {
   status: RecordingStatus;
   error?: string;
   language?: string;
-  /** OpenAI model used for this recording (set at upload; used on retry/resume). */
+  /** STT model used for this recording (set at upload; used on retry/resume). */
   transcriptionModel?: TranscriptionModel;
+  /** Effective STT backend (openai | openrouter); ollama Meeting AI falls back to openai. */
+  transcriptionProvider?: TranscriptionProvider;
   /** How tab + mic were captured (mixed single file vs separate tracks). */
   captureMode?: AudioCaptureMode;
   processingStartedAt?: string;
@@ -129,22 +131,160 @@ export function publicRecordingMeta(meta: RecordingMeta): RecordingMeta {
   return rest;
 }
 
-export const TRANSCRIPTION_MODELS = [
+/** Effective STT backend — Meeting AI `ollama` falls back to OpenAI (no local STT). */
+export type TranscriptionProvider = "openai" | "openrouter";
+
+export const TRANSCRIPTION_PROVIDERS = ["openai", "openrouter"] as const;
+
+export const OPENAI_TRANSCRIPTION_MODELS = [
   "whisper-1",
   "gpt-4o-transcribe-diarize",
 ] as const;
 
-export type TranscriptionModel = (typeof TRANSCRIPTION_MODELS)[number];
+export const OPENROUTER_TRANSCRIPTION_MODELS = [
+  "openai/whisper-large-v3-turbo",
+  "openai/whisper-1",
+  "openai/whisper-large-v3",
+  "qwen/qwen3-asr-0.6b",
+  "qwen/qwen3-asr-1.7b",
+  "qwen/qwen3-asr-flash-2026-02-10",
+  "nvidia/nemotron-3.5-asr-streaming-multilingual-0.6b",
+  "nvidia/parakeet-tdt-0.6b-v3",
+  "mistralai/voxtral-mini-transcribe",
+  "mistralai/voxtral-mini-3b-2507",
+  "x-ai/grok-stt-1.0",
+  "openai/gpt-4o-mini-transcribe",
+  "openai/gpt-4o-transcribe",
+  "deepgram/nova-3",
+] as const;
+
+export const TRANSCRIPTION_MODELS = [
+  ...OPENAI_TRANSCRIPTION_MODELS,
+  ...OPENROUTER_TRANSCRIPTION_MODELS,
+] as const;
+
+export type OpenAiTranscriptionModel = (typeof OPENAI_TRANSCRIPTION_MODELS)[number];
+export type OpenRouterTranscriptionModel = (typeof OPENROUTER_TRANSCRIPTION_MODELS)[number];
+export type TranscriptionModel =
+  | OpenAiTranscriptionModel
+  | OpenRouterTranscriptionModel;
 
 export const DEFAULT_TRANSCRIPTION_MODEL: TranscriptionModel = "whisper-1";
+export const DEFAULT_OPENROUTER_TRANSCRIPTION_MODEL: TranscriptionModel =
+  "openai/whisper-large-v3-turbo";
+
+const OPENAI_TRANSCRIPTION_MODEL_SET = new Set<string>(OPENAI_TRANSCRIPTION_MODELS);
+const OPENROUTER_TRANSCRIPTION_MODEL_SET = new Set<string>(
+  OPENROUTER_TRANSCRIPTION_MODELS,
+);
+const ALL_TRANSCRIPTION_MODEL_SET = new Set<string>(TRANSCRIPTION_MODELS);
+
+export function isOpenAiTranscriptionModel(model: string): boolean {
+  return OPENAI_TRANSCRIPTION_MODEL_SET.has(model);
+}
+
+export function isOpenRouterTranscriptionModel(model: string): boolean {
+  return OPENROUTER_TRANSCRIPTION_MODEL_SET.has(model);
+}
+
+export function isKnownTranscriptionModel(model: string): model is TranscriptionModel {
+  return ALL_TRANSCRIPTION_MODEL_SET.has(model);
+}
+
+export function isDiarizeTranscriptionModel(model: string): boolean {
+  return model === "gpt-4o-transcribe-diarize";
+}
+
+/** Meeting AI provider → STT backend (ollama has no local STT → openai). */
+export function effectiveTranscriptionProvider(
+  meetingProvider: MeetingLlmProvider | undefined,
+): TranscriptionProvider {
+  if (meetingProvider === "openrouter") {
+    return "openrouter";
+  }
+  return "openai";
+}
+
+export function parseTranscriptionProvider(
+  value: unknown,
+  fallback: TranscriptionProvider = "openai",
+): TranscriptionProvider {
+  return value === "openai" || value === "openrouter" ? value : fallback;
+}
+
+export function transcriptionModelsForProvider(
+  provider: TranscriptionProvider | MeetingLlmProvider,
+): readonly TranscriptionModel[] {
+  const stt =
+    provider === "openrouter"
+      ? "openrouter"
+      : provider === "openai" || provider === "ollama"
+        ? "openai"
+        : effectiveTranscriptionProvider(provider as MeetingLlmProvider);
+  return stt === "openrouter"
+    ? OPENROUTER_TRANSCRIPTION_MODELS
+    : OPENAI_TRANSCRIPTION_MODELS;
+}
+
+export function defaultTranscriptionModelForProvider(
+  provider: TranscriptionProvider | MeetingLlmProvider,
+): TranscriptionModel {
+  const stt = effectiveTranscriptionProvider(
+    provider === "openrouter" || provider === "openai" || provider === "ollama"
+      ? provider
+      : "openai",
+  );
+  return stt === "openrouter"
+    ? DEFAULT_OPENROUTER_TRANSCRIPTION_MODEL
+    : DEFAULT_TRANSCRIPTION_MODEL;
+}
+
+/** Dual-track always uses a Whisper-class model (never diarize). */
+export function dualTrackTranscriptionModelForProvider(
+  provider: TranscriptionProvider | MeetingLlmProvider,
+): TranscriptionModel {
+  const stt = effectiveTranscriptionProvider(
+    provider === "openrouter" || provider === "openai" || provider === "ollama"
+      ? provider
+      : "openai",
+  );
+  return stt === "openrouter"
+    ? DEFAULT_OPENROUTER_TRANSCRIPTION_MODEL
+    : "whisper-1";
+}
 
 export function parseTranscriptionModel(
   value: unknown,
   fallback: TranscriptionModel = DEFAULT_TRANSCRIPTION_MODEL,
 ): TranscriptionModel {
-  return value === "whisper-1" || value === "gpt-4o-transcribe-diarize"
-    ? value
-    : fallback;
+  if (typeof value === "string" && isKnownTranscriptionModel(value)) {
+    return value;
+  }
+  return fallback;
+}
+
+/** Coerce a saved/uploaded model to one valid for the effective STT provider. */
+export function coerceTranscriptionModelForProvider(
+  meetingProvider: MeetingLlmProvider | TranscriptionProvider | undefined,
+  model: string | undefined,
+  opts?: { dualTrack?: boolean },
+): TranscriptionModel {
+  const meeting: MeetingLlmProvider =
+    meetingProvider === "openrouter" ||
+    meetingProvider === "openai" ||
+    meetingProvider === "ollama"
+      ? meetingProvider
+      : "openai";
+  const stt = effectiveTranscriptionProvider(meeting);
+  if (opts?.dualTrack) {
+    return dualTrackTranscriptionModelForProvider(stt);
+  }
+  const allowed = transcriptionModelsForProvider(stt);
+  const trimmed = model?.trim();
+  if (trimmed && (allowed as readonly string[]).includes(trimmed)) {
+    return trimmed as TranscriptionModel;
+  }
+  return defaultTranscriptionModelForProvider(stt);
 }
 
 export function transcriptionModelLabel(model: TranscriptionModel): string {
@@ -153,13 +293,43 @@ export function transcriptionModelLabel(model: TranscriptionModel): string {
       return "Whisper (fast, no speaker labels)";
     case "gpt-4o-transcribe-diarize":
       return "Diarize (speaker labels, slower)";
+    case "openai/whisper-large-v3-turbo":
+      return "Whisper Large V3 Turbo";
+    case "openai/whisper-1":
+      return "Whisper 1";
+    case "openai/whisper-large-v3":
+      return "Whisper Large V3";
+    case "qwen/qwen3-asr-0.6b":
+      return "Qwen3 ASR 0.6B";
+    case "qwen/qwen3-asr-1.7b":
+      return "Qwen3 ASR 1.7B";
+    case "qwen/qwen3-asr-flash-2026-02-10":
+      return "Qwen3 ASR Flash";
+    case "nvidia/nemotron-3.5-asr-streaming-multilingual-0.6b":
+      return "Nemotron 3.5 ASR Streaming 0.6B";
+    case "nvidia/parakeet-tdt-0.6b-v3":
+      return "Parakeet TDT 0.6B v3";
+    case "mistralai/voxtral-mini-transcribe":
+      return "Voxtral Mini Transcribe";
+    case "mistralai/voxtral-mini-3b-2507":
+      return "Voxtral Mini 3B 2507";
+    case "x-ai/grok-stt-1.0":
+      return "Grok STT 1.0";
+    case "openai/gpt-4o-mini-transcribe":
+      return "GPT-4o Mini Transcribe";
+    case "openai/gpt-4o-transcribe":
+      return "GPT-4o Transcribe";
+    case "deepgram/nova-3":
+      return "Nova-3";
+    default:
+      return model;
   }
 }
 
 export function transcriptionModelToProfile(
   model: TranscriptionModel,
 ): TranscriptionProfile {
-  return model === "whisper-1" ? "whisper" : "diarize";
+  return isDiarizeTranscriptionModel(model) ? "diarize" : "whisper";
 }
 
 export const AUDIO_CAPTURE_MODES = ["mixed", "dual-track"] as const;

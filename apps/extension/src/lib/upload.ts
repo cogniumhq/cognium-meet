@@ -1,7 +1,8 @@
 import type { MeetingAskRequest, MeetingAskResponse, RecordingMeta, TranscriptResult } from "@cognium/meet-shared";
 import {
   DEFAULT_AUDIO_CAPTURE_MODE,
-  DEFAULT_TRANSCRIPTION_MODEL,
+  DEFAULT_MEETING_LLM_PROVIDER,
+  coerceTranscriptionModelForProvider,
 } from "@cognium/meet-shared";
 import { buildApiHeaders, getApiUrl } from "./api-headers.js";
 import { isLikelyAudio } from "./audio-bytes.js";
@@ -63,7 +64,11 @@ export async function uploadRecording(params: {
   form.append("durationMs", String(params.durationMs));
   form.append(
     "transcriptionModel",
-    settings.transcriptionModel ?? DEFAULT_TRANSCRIPTION_MODEL,
+    coerceTranscriptionModelForProvider(
+      settings.meetingLlmProvider ?? DEFAULT_MEETING_LLM_PROVIDER,
+      settings.transcriptionModel,
+      { dualTrack: (settings.captureMode ?? DEFAULT_AUDIO_CAPTURE_MODE) === "dual-track" },
+    ),
   );
   form.append(
     "captureMode",
@@ -118,7 +123,11 @@ export async function retryRecording(id: string): Promise<RecordingMeta> {
     method: "POST",
     headers,
     body: JSON.stringify({
-      transcriptionModel: settings.transcriptionModel ?? DEFAULT_TRANSCRIPTION_MODEL,
+      transcriptionModel: coerceTranscriptionModelForProvider(
+        settings.meetingLlmProvider ?? DEFAULT_MEETING_LLM_PROVIDER,
+        settings.transcriptionModel,
+        { dualTrack: (settings.captureMode ?? DEFAULT_AUDIO_CAPTURE_MODE) === "dual-track" },
+      ),
       captureMode: settings.captureMode ?? DEFAULT_AUDIO_CAPTURE_MODE,
       ...meetingSettingsFormFields(settings),
     }),

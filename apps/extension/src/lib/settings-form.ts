@@ -24,15 +24,18 @@ import {
   DEFAULT_MAX_UPLOAD_MB,
   DEFAULT_MEETING_LLM_PROVIDER,
   DEFAULT_OLLAMA_URL,
-  DEFAULT_TRANSCRIPTION_MODEL,
   coerceMeetingLlmModelForProvider,
+  coerceTranscriptionModelForProvider,
   defaultMeetingLlmModelForProvider,
+  dualTrackTranscriptionModelForProvider,
+  effectiveTranscriptionProvider,
+  isDiarizeTranscriptionModel,
   meetingLlmModelLabel,
   meetingLlmModelsForProvider,
   MEETING_LLM_PROVIDERS,
   meetingLlmProviderLabel,
-  TRANSCRIPTION_MODELS,
   transcriptionModelLabel,
+  transcriptionModelsForProvider,
   type AudioCaptureMode,
   type MeetingLlmProvider,
   type TranscriptionModel,
@@ -266,10 +269,15 @@ export async function initSettingsForm(root: ParentNode): Promise<void> {
   els.apiTokenInput.value = settings.apiToken;
   els.openaiApiKeyInput.value = openaiApiKey ?? "";
   els.openRouterApiKeyInput.value = openRouterApiKey ?? "";
-  populateTranscriptionModels(els, settings.transcriptionModel, settings.captureMode);
   populateCaptureModes(els, settings.captureMode);
   populateMeetingLlmProviders(els, settings.meetingLlmProvider);
   const llmProvider = settings.meetingLlmProvider ?? DEFAULT_MEETING_LLM_PROVIDER;
+  populateTranscriptionModels(
+    els,
+    llmProvider,
+    settings.transcriptionModel,
+    settings.captureMode,
+  );
   const savedLlmModel =
     settings.meetingLlmModel ??
     (llmProvider === "ollama" ? settings.ollamaModel : undefined) ??
@@ -328,6 +336,14 @@ export async function initSettingsForm(root: ParentNode): Promise<void> {
   els.meetingLlmProviderSelect.addEventListener("change", () => {
     const provider = els.meetingLlmProviderSelect.value as MeetingLlmProvider;
     updateProviderFieldsVisibility(els);
+    const captureMode = els.captureModeSelect.value as AudioCaptureMode;
+    populateTranscriptionModels(
+      els,
+      provider,
+      els.transcriptionModelSelect.value as TranscriptionModel,
+      captureMode,
+    );
+    updateCaptureModeUi(els);
     if (provider === "ollama") {
       void refreshOllamaModelOptions(
         els,
@@ -501,11 +517,14 @@ async function saveMicDevice(els: SettingsFormElements): Promise<void> {
 
 function populateTranscriptionModels(
   els: SettingsFormElements,
-  selected?: TranscriptionModel,
+  meetingProvider: MeetingLlmProvider,
+  selected?: TranscriptionModel | string,
   captureMode?: AudioCaptureMode,
 ): void {
+  const sttProvider = effectiveTranscriptionProvider(meetingProvider);
+  const models = transcriptionModelsForProvider(sttProvider);
   els.transcriptionModelSelect.innerHTML = "";
-  for (const model of TRANSCRIPTION_MODELS) {
+  for (const model of models) {
     const option = document.createElement("option");
     option.value = model;
     option.textContent = transcriptionModelLabel(model);
@@ -513,27 +532,33 @@ function populateTranscriptionModels(
   }
 
   const dual = captureMode === "dual-track";
-  const effective = dual ? "whisper-1" : (selected ?? DEFAULT_TRANSCRIPTION_MODEL);
+  const effective = coerceTranscriptionModelForProvider(meetingProvider, selected, {
+    dualTrack: dual,
+  });
   els.transcriptionModelSelect.value = effective;
-  applyTranscriptionModelAvailability(els, dual);
+  applyTranscriptionModelAvailability(els, meetingProvider, dual);
 }
 
 function applyTranscriptionModelAvailability(
   els: SettingsFormElements,
+  meetingProvider: MeetingLlmProvider,
   dual: boolean,
 ): void {
+  const sttProvider = effectiveTranscriptionProvider(meetingProvider);
   for (const option of els.transcriptionModelSelect.options) {
-    const isDiarize = option.value === "gpt-4o-transcribe-diarize";
-    option.disabled = dual && isDiarize;
-    option.hidden = dual && isDiarize;
+    const hideDiarize = dual || sttProvider !== "openai";
+    const isDiarize = isDiarizeTranscriptionModel(option.value);
+    option.disabled = hideDiarize && isDiarize;
+    option.hidden = hideDiarize && isDiarize;
   }
 
   if (dual) {
-    els.transcriptionModelSelect.value = "whisper-1";
+    els.transcriptionModelSelect.value =
+      dualTrackTranscriptionModelForProvider(meetingProvider);
     els.transcriptionModelSelect.disabled = true;
     els.transcriptionModelSelect.setAttribute(
       "aria-description",
-      "Dual-track always uses Whisper for You and Others labels",
+      "Dual-track always uses a Whisper-class model for You and Others labels",
     );
     return;
   }
@@ -639,20 +664,35 @@ function updateCaptureModeUi(
   savedTranscriptionModel?: TranscriptionModel,
 ): void {
   const dual = els.captureModeSelect.value === "dual-track";
+  const meetingProvider = els.meetingLlmProviderSelect.value as MeetingLlmProvider;
   els.dualTrackNote.classList.toggle("hidden", !dual);
   els.micHint.textContent = dual
     ? "Tab and mic are recorded as separate files. Your mic is labeled You; tab audio is Others. Allow mic and pick a device below."
     : "Tab audio is always recorded. Your mic is mixed in so your voice is included. Chrome ignores Linux/GNOME input settings — pick the device below.";
 
-  applyTranscriptionModelAvailability(els, dual);
+  applyTranscriptionModelAvailability(els, meetingProvider, dual);
   if (!dual && savedTranscriptionModel) {
-    els.transcriptionModelSelect.value = savedTranscriptionModel;
+    const coerced = coerceTranscriptionModelForProvider(
+      meetingProvider,
+      savedTranscriptionModel,
+    );
+    els.transcriptionModelSelect.value = coerced;
+  } else if (!dual) {
+    const current = els.transcriptionModelSelect.value;
+    els.transcriptionModelSelect.value = coerceTranscriptionModelForProvider(
+      meetingProvider,
+      current,
+    );
   }
 }
 
 function updateProviderFieldsVisibility(els: SettingsFormElements): void {
   const provider = els.meetingLlmProviderSelect.value;
-  els.openaiFields.classList.toggle("hidden", provider !== "openai");
+  // OpenAI key is needed for STT when Meeting AI is OpenAI or Ollama (no local STT).
+  els.openaiFields.classList.toggle(
+    "hidden",
+    provider !== "openai" && provider !== "ollama",
+  );
   els.ollamaFields.classList.toggle("hidden", provider !== "ollama");
   els.openRouterFields.classList.toggle("hidden", provider !== "openrouter");
 }
@@ -674,10 +714,11 @@ async function saveAllSettings(els: SettingsFormElements): Promise<void> {
         defaultMeetingLlmModelForProvider(provider),
     );
     const captureMode = els.captureModeSelect.value as AudioCaptureMode;
-    const transcriptionModel: TranscriptionModel =
-      captureMode === "dual-track"
-        ? "whisper-1"
-        : (els.transcriptionModelSelect.value as TranscriptionModel);
+    const transcriptionModel = coerceTranscriptionModelForProvider(
+      provider,
+      els.transcriptionModelSelect.value,
+      { dualTrack: captureMode === "dual-track" },
+    );
 
     await saveSettings({
       ...settings,

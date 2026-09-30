@@ -46,23 +46,6 @@
             <select id="capture-mode"></select>
           </div>
         </section>
-
-        <section class="settings-card">
-          <h3>Transcription</h3>
-          <p>Choose speed vs speaker labels. Requires an OpenAI key (extension or server).</p>
-          <p class="field-hint">
-            Transcription uses your saved OpenAI API key (set it under Meeting AI → OpenAI).
-          </p>
-          <p id="dual-track-note" class="settings-note hidden">
-            Dual-track uses Whisper only — speakers are labeled <strong>You</strong> (mic) and <strong>Others</strong> (tab).
-          </p>
-
-          <div class="field">
-            <label for="transcription-model">Model</label>
-            <select id="transcription-model"></select>
-          </div>
-        </section>
-
         <section class="settings-card">
           <h3>Meeting AI &amp; storage</h3>
           <p>
@@ -90,10 +73,9 @@
             <div class="field">
               <label for="openai-api-key">OpenAI API key</label>
               <p class="field-hint">
-                Used for notes/Ask when Meeting AI provider is OpenAI. Also used for
-                transcription (key stays saved if you switch providers). Get a key at
-                <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">OpenAI API keys</a>. Stored locally on this device (not synced) and sent to the API only when needed.
-                Optional if your server has <code>OPENAI_API_KEY</code> set.
+                Used for OpenAI notes/Ask and for speech-to-text when Meeting AI is OpenAI or Ollama.
+                <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">OpenAI API keys</a>. Stored on this device; optional if the server has
+                <code>OPENAI_API_KEY</code>.
               </p>
               <div class="token-row">
                 <input
@@ -124,11 +106,9 @@
             <div class="field">
               <label for="openrouter-api-key">OpenRouter API key</label>
               <p class="field-hint">
-                Required for notes/Ask when Meeting AI provider is OpenRouter.
-                Get a key at
-                <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">OpenRouter keys</a>. Stored locally on this device (not synced). Optional if your server has
-                <code>OPENROUTER_API_KEY</code> set. Base URL is
-                <code>https://openrouter.ai/api/v1</code>.
+                Used for OpenRouter notes/Ask and speech-to-text.
+                <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">OpenRouter keys</a>.
+                Stored on this device; optional if the server has <code>OPENROUTER_API_KEY</code>.
               </p>
               <div class="token-row">
                 <input
@@ -147,6 +127,19 @@
                 </button>
               </div>
             </div>
+          </div>
+
+
+          <div class="field">
+            <label for="transcription-model">Transcription model</label>
+            <p class="field-hint">
+              Follows Meeting AI provider. OpenAI/Ollama need an OpenAI key (no local STT).
+              OpenRouter uses your OpenRouter key. Diarize is OpenAI-only.
+            </p>
+            <p id="dual-track-note" class="settings-note hidden">
+              Dual-track uses Whisper only — speakers are labeled <strong>You</strong> (mic) and <strong>Others</strong> (tab).
+            </p>
+            <select id="transcription-model"></select>
           </div>
 
           <div class="field field--checkbox">
