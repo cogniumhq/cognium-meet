@@ -7,6 +7,58 @@ function extractOllamaMissingModel(message: string): string | undefined {
   return match?.[1];
 }
 
+function messageFromBody(body: unknown): string | undefined {
+  if (typeof body === "string") {
+    const trimmed = body.trim();
+    if (!trimmed || trimmed.startsWith("[ReadableStream")) {
+      return undefined;
+    }
+    try {
+      return messageFromBody(JSON.parse(trimmed)) ?? trimmed.slice(0, 500);
+    } catch {
+      return trimmed.slice(0, 500);
+    }
+  }
+  if (!body || typeof body !== "object") {
+    return undefined;
+  }
+  const record = body as Record<string, unknown>;
+  // Ax status errors nest the HTTP body under responseBody.responseBody.
+  if ("responseBody" in record) {
+    return messageFromBody(record.responseBody);
+  }
+  // OpenAI / OpenRouter: { error: { message } }; Ollama: { error: "..." }.
+  const error = record.error;
+  if (typeof error === "string" && error.trim()) {
+    return error.trim();
+  }
+  if (error && typeof error === "object") {
+    const message = (error as Record<string, unknown>).message;
+    if (typeof message === "string" && message.trim()) {
+      return message.trim();
+    }
+  }
+  if (typeof record.message === "string" && record.message.trim()) {
+    return record.message.trim();
+  }
+  return undefined;
+}
+
+/** The provider's own error message (e.g. OpenAI's "Unsupported parameter: …"), if Ax captured it. */
+export function providerErrorReason(err: unknown): string | undefined {
+  let current: unknown = err;
+  for (let depth = 0; current && depth < 5; depth++) {
+    if (typeof current === "object" && "responseBody" in current) {
+      const reason = messageFromBody((current as { responseBody: unknown }).responseBody);
+      if (reason) {
+        return reason;
+      }
+    }
+    current = current instanceof Error ? current.cause : undefined;
+  }
+  return undefined;
+}
+
 /** Turn Ax / provider errors into a short message for API clients. */
 export function formatMeetingLlmError(
   err: unknown,
@@ -23,7 +75,9 @@ export function formatMeetingLlmError(
       ? err.cause.message
       : "";
 
-  const combined = `${message}\n${cause}`;
+  const reason = providerErrorReason(err);
+  const detail = reason ?? message;
+  const combined = `${message}\n${cause}\n${reason ?? ""}`;
 
   if (provider === "ollama") {
     const missing = extractOllamaMissingModel(combined) ?? model;
@@ -45,11 +99,8 @@ export function formatMeetingLlmError(
     if (/model.*not found|does not exist/i.test(combined)) {
       return `OpenAI model "${model}" is not available for your API key. Choose another model in extension Settings.`;
     }
-    if (/400|bad request/i.test(combined) && /gpt-5\.5/i.test(model)) {
-      return `OpenAI rejected GPT-5.5 (${message}). Try gpt-4o or gpt-4.1, or confirm your API key has GPT-5.5 access.`;
-    }
     if (/400|bad request/i.test(combined)) {
-      return `OpenAI rejected the request for model "${model}": ${message}`;
+      return `OpenAI rejected the request for model "${model}": ${detail}`;
     }
   }
 
@@ -64,9 +115,9 @@ export function formatMeetingLlmError(
       return `OpenRouter model "${model}" is not available. Choose another model in extension Settings (use provider/model ids, e.g. openai/gpt-4o-mini).`;
     }
     if (/400|bad request/i.test(combined)) {
-      return `OpenRouter rejected the request for model "${model}": ${message}`;
+      return `OpenRouter rejected the request for model "${model}": ${detail}`;
     }
   }
 
-  return message || "Meeting AI request failed";
+  return detail || "Meeting AI request failed";
 }
