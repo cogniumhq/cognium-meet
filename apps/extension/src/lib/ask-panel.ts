@@ -6,7 +6,9 @@ import {
   findPendingAskTab,
   formatMeetingScopeLabel,
   getActiveAskTab,
+  focusAskTabForRecording,
   getHistory,
+  HISTORY_KEY,
   loadAskWorkspace,
   MAX_ASK_TABS,
   removeAskTab,
@@ -17,6 +19,8 @@ import {
   type StoredRecording,
 } from "./storage.js";
 import { canRetryAsk, messagesForAskRetry } from "./ask-chat.js";
+import { formatRelativeDateTime } from "./format-date.js";
+import { showAlert, showConfirm } from "./confirm-dialog.js";
 
 /**
  * Ask chat UI for the side panel. Expects the `meeting-ask-*` element ids
@@ -28,13 +32,10 @@ export interface AskPanelOptions {
 }
 
 const meetingAsk = document.getElementById("meeting-ask") as HTMLTextAreaElement;
-const meetingAskLabel = document.getElementById("meeting-ask-label") as HTMLLabelElement;
+const meetingAskScope = document.getElementById("meeting-ask-scope") as HTMLSelectElement;
 const meetingAskBtn = document.getElementById("meeting-ask-btn") as HTMLButtonElement;
 const meetingAskCancelBtn = document.getElementById(
   "meeting-ask-cancel-btn",
-) as HTMLButtonElement;
-const meetingAskClearScope = document.getElementById(
-  "meeting-ask-clear-scope",
 ) as HTMLButtonElement;
 const meetingAskClearChat = document.getElementById(
   "meeting-ask-clear-chat",
@@ -52,6 +53,20 @@ let askScopeDurationMs: number | undefined;
 let askMessages: MeetingAskMessage[] = [];
 let askChatSaveTimer: number | undefined;
 let askLoading = false;
+let askHistory: StoredRecording[] = [];
+
+const COMPOSER_MAX_HEIGHT_PX = 160;
+const ALL_MEETINGS_SUGGESTIONS = [
+  "What action items were assigned to me?",
+  "What decisions did we make this week?",
+  "Which meetings mentioned pricing?",
+];
+const MEETING_SUGGESTIONS = [
+  "Summarize this meeting",
+  "What were the action items and owners?",
+  "What decisions were made?",
+  "What open questions are left?",
+];
 
 export async function initAskPanel(opts: AskPanelOptions): Promise<void> {
   options = opts;
@@ -61,9 +76,13 @@ export async function initAskPanel(opts: AskPanelOptions): Promise<void> {
     event.stopPropagation();
     void createNewAskTab();
   });
-  meetingAskClearScope.addEventListener("click", () => void setAskScope());
+  meetingAskScope.addEventListener("change", () => void changeAskScope(meetingAskScope.value));
   meetingAskClearChat.addEventListener("click", () => void clearAskChatUi());
-  meetingAsk.addEventListener("input", () => scheduleSaveAskChat());
+  meetingAsk.addEventListener("input", () => {
+    autosizeComposer();
+    updateSendState();
+    scheduleSaveAskChat();
+  });
   meetingAsk.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -75,7 +94,7 @@ export async function initAskPanel(opts: AskPanelOptions): Promise<void> {
     void persistActiveTab();
   });
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === "local" && changes[ASK_WORKSPACE_KEY]) {
+    if (area === "local" && (changes[ASK_WORKSPACE_KEY] || changes[HISTORY_KEY])) {
       void refreshAskFromStorage();
     }
   });
@@ -86,20 +105,96 @@ export async function initAskPanel(opts: AskPanelOptions): Promise<void> {
   }
 }
 
+function isAskableRecording(item: StoredRecording): boolean {
+  return item.status === "completed";
+}
+
+function scopeOptionLabel(title: string | undefined, startedAt: string | undefined): string {
+  const name = title?.trim() || "Recording";
+  const when = startedAt ? formatRelativeDateTime(startedAt) : "";
+  return when ? `${name} · ${when}` : name;
+}
+
 function updateAskScopeChrome(): void {
-  if (askScopeRecordingId) {
-    const scopeLabel = formatMeetingScopeLabel(askScopeMeetingTitle, {
-      startedAt: askScopeStartedAt,
-      durationMs: askScopeDurationMs,
-    });
-    meetingAskLabel.textContent = `Ask about: ${scopeLabel}`;
-    meetingAskLabel.title = scopeLabel;
-    meetingAskClearScope.classList.remove("hidden");
-  } else {
-    meetingAskLabel.textContent = "Ask about your meetings";
-    meetingAskLabel.removeAttribute("title");
-    meetingAskClearScope.classList.add("hidden");
+  meetingAskScope.innerHTML = "";
+  meetingAskScope.appendChild(new Option("All meetings", ""));
+
+  const recordings = askHistory.filter(isAskableRecording);
+  for (const item of recordings) {
+    meetingAskScope.appendChild(
+      new Option(scopeOptionLabel(item.meetingTitle, item.startedAt), item.id),
+    );
   }
+  // Keep a scoped chat selectable even if its recording left the history list.
+  if (askScopeRecordingId && !recordings.some((item) => item.id === askScopeRecordingId)) {
+    meetingAskScope.appendChild(
+      new Option(scopeOptionLabel(askScopeMeetingTitle, askScopeStartedAt), askScopeRecordingId),
+    );
+  }
+
+  meetingAskScope.value = askScopeRecordingId ?? "";
+  meetingAskScope.title = askScopeRecordingId
+    ? formatMeetingScopeLabel(askScopeMeetingTitle, {
+        startedAt: askScopeStartedAt,
+        durationMs: askScopeDurationMs,
+      })
+    : "Search across all your meetings";
+  meetingAskScope.disabled = askLoading;
+}
+
+/**
+ * Change what the active chat is about. An empty chat is re-scoped in place;
+ * a chat with messages is kept and another chat opens for the new scope.
+ */
+async function changeAskScope(recordingId: string): Promise<void> {
+  if (recordingId === (askScopeRecordingId ?? "")) {
+    return;
+  }
+  const item = recordingId
+    ? askHistory.find((entry) => entry.id === recordingId)
+    : undefined;
+  const workspace = await loadAskWorkspace();
+  const existing = item
+    ? workspace.tabs.find((tab) => tab.scopeRecordingId === item.id)
+    : undefined;
+  const activeIsEmpty = askMessages.length === 0 && !askLoading;
+
+  if (!existing && activeIsEmpty) {
+    await setAskScope(item);
+    renderAskThread();
+    return;
+  }
+
+  await persistActiveTab(askLoading);
+  let next = await loadAskWorkspace();
+  if (item) {
+    next = focusAskTabForRecording(next, item);
+  } else {
+    const emptyAllTab = next.tabs.find(
+      (tab) => !tab.scopeRecordingId && tab.messages.length === 0 && !tab.pending,
+    );
+    next = emptyAllTab
+      ? setActiveAskTab(next, emptyAllTab.id)
+      : addAskTab(next, createAskTab());
+  }
+  if (next.activeTabId === askActiveTabId) {
+    // Tab limit reached — nothing new could open.
+    await showAlert(`You can have up to ${MAX_ASK_TABS} chats`, "Close one to start another.");
+    updateAskScopeChrome();
+    return;
+  }
+  await saveAskWorkspace(next);
+  await refreshAskFromStorage();
+  meetingAsk.focus();
+}
+
+function autosizeComposer(): void {
+  meetingAsk.style.height = "auto";
+  meetingAsk.style.height = `${Math.min(meetingAsk.scrollHeight, COMPOSER_MAX_HEIGHT_PX)}px`;
+}
+
+function updateSendState(): void {
+  meetingAskBtn.disabled = askLoading || !meetingAsk.value.trim();
 }
 
 function applyActiveTabToUi(tab: {
@@ -118,6 +213,7 @@ function applyActiveTabToUi(tab: {
   askMessages = tab.messages ?? [];
   askLoading = tab.pending === true;
   meetingAsk.value = tab.draftInput ?? "";
+  autosizeComposer();
   updateAskScopeChrome();
 }
 
@@ -217,7 +313,7 @@ function askTabClosePrompt(tab: {
   scopeMeetingTitle?: string;
   scopeStartedAt?: string;
   scopeDurationMs?: number;
-}): boolean {
+}): Promise<boolean> {
   const name = tab.scopeRecordingId
     ? formatMeetingScopeLabel(tab.scopeMeetingTitle, {
         startedAt: tab.scopeStartedAt,
@@ -225,7 +321,12 @@ function askTabClosePrompt(tab: {
       })
     : tab.label.trim() || "this chat";
 
-  return confirm(`Close "${name}"?\n\nMessages in this chat will be deleted.`);
+  return showConfirm({
+    title: `Close "${name}"?`,
+    message: "Messages in this chat will be deleted.",
+    confirmLabel: "Close chat",
+    danger: true,
+  });
 }
 
 async function closeAskTab(tabId: string): Promise<void> {
@@ -234,7 +335,7 @@ async function closeAskTab(tabId: string): Promise<void> {
   if (!closing) {
     return;
   }
-  if (!askTabClosePrompt(closing)) {
+  if (!(await askTabClosePrompt(closing))) {
     return;
   }
   if (closing.pending) {
@@ -250,23 +351,18 @@ async function closeAskTab(tabId: string): Promise<void> {
   await refreshAskFromStorage();
 }
 
+/** Re-scope the active (empty) chat in place. */
 async function setAskScope(item?: StoredRecording): Promise<void> {
-  const prevScope = askScopeRecordingId;
-  await persistActiveTab(askLoading);
+  // Update memory and storage in one write: an intermediate save would fire
+  // a storage refresh that restores the old scope before this one lands.
   askScopeRecordingId = item?.id;
   askScopeMeetingTitle = item?.meetingTitle;
   askScopeStartedAt = item?.startedAt;
   askScopeDurationMs = item?.durationMs;
-  if (prevScope !== askScopeRecordingId && askMessages.length > 0) {
-    askMessages = [];
-    renderAskThread();
-  }
   updateAskScopeChrome();
   updateAskChrome();
   await persistActiveTab();
-  if (item) {
-    meetingAsk.focus();
-  }
+  meetingAsk.focus();
 }
 
 function updateAskChrome(): void {
@@ -279,6 +375,8 @@ function updateAskChrome(): void {
   meetingAskBtn.classList.toggle("hidden", anyPending);
   meetingAskCancelBtn.classList.toggle("hidden", !anyPending);
   meetingAsk.disabled = anyPending;
+  meetingAskScope.disabled = anyPending;
+  updateSendState();
 }
 
 function scheduleSaveAskChat(): void {
@@ -291,6 +389,7 @@ function scheduleSaveAskChat(): void {
 async function refreshAskFromStorage(): Promise<void> {
   let workspace = await loadAskWorkspace();
   const history = await getHistory();
+  askHistory = history;
   let enriched = false;
 
   for (const tab of workspace.tabs) {
@@ -317,7 +416,6 @@ async function refreshAskFromStorage(): Promise<void> {
   askActiveTabId = active.id;
   applyActiveTabToUi(active);
   renderAskTabs(workspace);
-  meetingAskBtn.disabled = askLoading;
   updateAskChrome();
   renderAskThread();
 }
@@ -342,7 +440,7 @@ async function clearAskChatUi(): Promise<void> {
   askMessages = [];
   askLoading = false;
   meetingAsk.value = "";
-  meetingAskBtn.disabled = false;
+  autosizeComposer();
   renderAskThread();
   updateAskChrome();
   await persistActiveTab(false);
@@ -395,11 +493,9 @@ function renderAskThread(): void {
   meetingAskThread.innerHTML = "";
 
   if (askMessages.length === 0 && !askLoading) {
-    meetingAskThread.classList.add("hidden");
+    renderAskEmptyState();
     return;
   }
-
-  meetingAskThread.classList.remove("hidden");
 
   for (let i = 0; i < askMessages.length; i++) {
     const message = askMessages[i];
@@ -420,6 +516,10 @@ function renderAskThread(): void {
 
     if (message.role === "assistant" && message.citations?.length) {
       appendCitationButtons(bubble, message.citations);
+    }
+
+    if (message.role === "assistant" && !message.isError) {
+      bubble.appendChild(createCopyButton(message.content));
     }
 
     const isLast = i === askMessages.length - 1;
@@ -450,6 +550,65 @@ function renderAskThread(): void {
   meetingAskThread.scrollTop = meetingAskThread.scrollHeight;
 }
 
+function renderAskEmptyState(): void {
+  const empty = document.createElement("div");
+  empty.className = "meeting-ask-empty";
+
+  const title = document.createElement("p");
+  title.className = "meeting-ask-empty-title";
+  title.textContent = askScopeRecordingId
+    ? `Ask about “${askScopeMeetingTitle?.trim() || "this recording"}”`
+    : "Ask across all your meetings";
+  empty.appendChild(title);
+
+  const hasRecordings = askHistory.some(isAskableRecording);
+  const hint = document.createElement("p");
+  hint.className = "meeting-ask-empty-hint";
+  hint.textContent = hasRecordings
+    ? "Answers come from your transcripts and notes, with links to the sources."
+    : "Record and transcribe a meeting first — then ask anything about it here.";
+  empty.appendChild(hint);
+
+  if (hasRecordings || askScopeRecordingId) {
+    const list = document.createElement("div");
+    list.className = "meeting-ask-suggestions";
+    const suggestions = askScopeRecordingId ? MEETING_SUGGESTIONS : ALL_MEETINGS_SUGGESTIONS;
+    for (const suggestion of suggestions) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "meeting-ask-suggestion";
+      btn.textContent = suggestion;
+      btn.addEventListener("click", () => {
+        meetingAsk.value = suggestion;
+        void runMeetingAsk();
+      });
+      list.appendChild(btn);
+    }
+    empty.appendChild(list);
+  }
+
+  meetingAskThread.appendChild(empty);
+}
+
+function createCopyButton(text: string): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "meeting-ask-copy-btn";
+  btn.textContent = "Copy";
+  btn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      btn.textContent = "Copied";
+    } catch {
+      btn.textContent = "Copy failed";
+    }
+    window.setTimeout(() => {
+      btn.textContent = "Copy";
+    }, 1500);
+  });
+  return btn;
+}
+
 async function submitPendingAsk(): Promise<void> {
   try {
     const result = (await chrome.runtime.sendMessage({ type: "ASK_MEETINGS" })) as
@@ -458,7 +617,6 @@ async function submitPendingAsk(): Promise<void> {
 
     if (result?.ok === false && result.error === "No pending ask") {
       askLoading = false;
-      meetingAskBtn.disabled = false;
       await persistActiveTab(false);
       renderAskThread();
       updateAskChrome();
@@ -511,7 +669,6 @@ async function cancelMeetingAsk(): Promise<void> {
   }
 
   askLoading = false;
-  meetingAskBtn.disabled = false;
   await persistActiveTab(false);
   renderAskThread();
   updateAskChrome();
@@ -530,8 +687,8 @@ async function runMeetingAsk(): Promise<void> {
 
   askMessages.push({ role: "user", content: question });
   meetingAsk.value = "";
+  autosizeComposer();
   askLoading = true;
-  meetingAskBtn.disabled = true;
   updateAskChrome();
   renderAskThread();
   await persistActiveTab(true);

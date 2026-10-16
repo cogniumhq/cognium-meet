@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Cognium Meet",
   "description": "Record browser tab audio and transcribe to text files",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "permissions": [
     "tabCapture",
     "offscreen",

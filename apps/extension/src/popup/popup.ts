@@ -44,6 +44,8 @@ import { isRecordableTabUrl } from "../lib/recordable-tab.js";
 import { isMeetingAskEnabled } from "../lib/client-config.js";
 import { initSettingsForm } from "../lib/settings-form.js";
 import { initTranscriptViewer } from "../lib/transcript-viewer.js";
+import { formatRelativeDateTime } from "../lib/format-date.js";
+import { showConfirm } from "../lib/confirm-dialog.js";
 
 const startBtn = document.getElementById("start-btn") as HTMLButtonElement;
 const stopOnlyBtn = document.getElementById("stop-only-btn") as HTMLButtonElement;
@@ -760,13 +762,7 @@ function appendHistoryMeta(
   const date = document.createElement("span");
   date.className = "history-date";
   const started = new Date(item.startedAt);
-  date.textContent = started.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "numeric",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  date.textContent = formatRelativeDateTime(item.startedAt);
   date.title = started.toLocaleString();
   meta.appendChild(date);
 
@@ -963,11 +959,13 @@ async function deleteLocalRecording(item: {
   meetingTitle?: string;
 }): Promise<void> {
   const label = item.meetingTitle ?? "this recording";
-  if (
-    !confirm(
-      `Delete "${label}" from this device?\n\nLocal audio will be removed from browser storage. This cannot be undone.`,
-    )
-  ) {
+  const confirmed = await showConfirm({
+    title: `Delete "${label}" from this device?`,
+    message: "Local audio will be removed from browser storage. This cannot be undone.",
+    confirmLabel: "Delete",
+    danger: true,
+  });
+  if (!confirmed) {
     return;
   }
 
@@ -995,11 +993,22 @@ async function removeFromHistory(item: {
       item.status === "failed" ||
       item.status === "processing");
 
-  const message = onServer
-    ? `Delete "${label}" from the server?\n\nAudio and transcripts will be permanently removed.`
-    : `Remove "${label}" from Recent transcripts?`;
-
-  if (!confirm(message)) {
+  const confirmed = await showConfirm(
+    onServer
+      ? {
+          title: `Delete "${label}"?`,
+          message: "The audio and transcript will be permanently removed from the server.",
+          confirmLabel: "Delete",
+          danger: true,
+        }
+      : {
+          title: `Remove "${label}"?`,
+          message: "It will be removed from Recent transcripts.",
+          confirmLabel: "Remove",
+          danger: true,
+        },
+  );
+  if (!confirmed) {
     return;
   }
 

@@ -57,6 +57,31 @@ body {
   gap: 10px;
 }
 
+.app-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.header-ask-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  color: #cfe0ff;
+  font-size: 12px;
+  box-shadow: none;
+}
+
+.header-ask-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 24%, var(--surface));
+  color: #fff;
+}
+
 .app-header h1 {
   margin: 0;
   font-size: 18px;
@@ -193,8 +218,11 @@ body {
 }
 
 .btn-record-icon {
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.9);
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.22);
 }
 
 .btn-record:hover:not(:disabled) {
@@ -256,6 +284,47 @@ button:disabled {
 
 .hidden {
   display: none !important;
+}
+
+/* ── Confirm dialog (replaces native confirm, which the popup clips) ── */
+
+.confirm-dialog {
+  width: calc(100% - 32px);
+  max-width: 340px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+
+.confirm-dialog::backdrop {
+  background: rgba(5, 9, 18, 0.65);
+}
+
+.confirm-dialog-title {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.confirm-dialog-message {
+  margin: 0 0 14px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.confirm-dialog-actions button {
+  padding: 8px 14px;
 }
 
 /* ── Section headings ── */
@@ -599,59 +668,6 @@ button:disabled {
   background: var(--danger-bg);
   border-color: color-mix(in srgb, var(--danger) 20%, transparent);
   color: #fca5a5;
-}
-
-/* ── Ask (opens the side panel) ── */
-
-.meeting-ask-open-btn {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  background: var(--surface);
-  color: inherit;
-  text-align: left;
-  box-shadow: none;
-  cursor: pointer;
-}
-
-.meeting-ask-open-btn:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--border-subtle));
-  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
-}
-
-.meeting-ask-summary-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.meeting-ask-open-icon {
-  flex-shrink: 0;
-  color: var(--text-dim);
-  font-size: 14px;
-}
-
-.meeting-ask-open-btn:hover .meeting-ask-open-icon {
-  color: var(--accent);
-}
-
-.meeting-ask-summary-title {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-}
-
-.meeting-ask-summary-hint {
-  font-size: 11px;
-  color: var(--text-muted);
 }
 
 .meeting-ask-wrap {
@@ -1021,12 +1037,14 @@ button:disabled {
 
 .transcript-header {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  gap: 10px;
   margin-bottom: 12px;
 }
 
 .transcript-header h2 {
+  flex: 1;
+  min-width: 0;
   margin: 0;
   font-size: 15px;
   font-weight: 600;
@@ -1034,20 +1052,31 @@ button:disabled {
   word-break: break-word;
 }
 
-.back-link {
-  align-self: flex-start;
-  background: transparent;
-  color: #7eb8ff;
-  padding: 0;
-  font-size: 12px;
-  font-weight: 500;
-  box-shadow: none;
+/* Back button: same square as the settings ⚙ button, with a chevron. */
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.back-link:hover:not(:disabled) {
-  background: transparent;
-  text-decoration: underline;
-  box-shadow: none;
+.back-btn:hover:not(:disabled) {
+  color: var(--text);
+}
+
+/* Keep Back reachable while scrolling the long settings list. */
+#settings-view .settings-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: -16px -14px 0;
+  padding: 14px 14px 10px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+#settings-view .settings-header h2 {
+  font-size: 15px;
+  font-weight: 600;
 }
 
 .transcript-toolbar {

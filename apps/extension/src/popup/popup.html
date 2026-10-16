@@ -16,6 +16,21 @@
               <h1>Cognium Meet</h1>
               <p class="subtitle">Record &amp; transcribe the active tab</p>
             </div>
+            <div class="app-header-actions">
+            <button
+              id="meeting-ask-open-btn"
+              type="button"
+              class="header-ask-btn"
+              title="Chat with your meeting transcripts (opens the side panel)"
+            >
+              <svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M4 3h12a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H9.4l-3.7 2.9A.75.75 0 0 1 4.5 16.3V14H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"
+                />
+              </svg>
+              Ask
+            </button>
             <button
               id="settings-open-btn"
               type="button"
@@ -25,6 +40,7 @@
             >
               ⚙
             </button>
+            </div>
           </div>
         </header>
 
@@ -54,7 +70,7 @@
 
           <div class="actions">
             <button id="start-btn" type="button" class="btn-record">
-              <span class="btn-record-icon" aria-hidden="true">●</span>
+              <span class="btn-record-icon" aria-hidden="true"></span>
               Start recording
             </button>
             <div id="recording-actions" class="recording-actions hidden">
@@ -74,24 +90,29 @@
           </div>
           <ul id="history-list" class="history-scroll"></ul>
 
-          <button
-            id="meeting-ask-open-btn"
-            type="button"
-            class="meeting-ask-open-btn"
-            title="Open Ask in the side panel"
-          >
-            <span class="meeting-ask-summary-text">
-              <span class="meeting-ask-summary-title">Ask</span>
-              <span class="meeting-ask-summary-hint">Chat with your meeting transcripts</span>
-            </span>
-            <span class="meeting-ask-open-icon" aria-hidden="true">⇱</span>
-          </button>
         </section>
       </div>
 
       <div id="transcript-view" class="hidden">
         <div class="transcript-header">
-          <button id="transcript-back-btn" type="button" class="back-link">← Back</button>
+          <button
+            id="transcript-back-btn"
+            type="button"
+            class="icon-btn back-btn"
+            title="Back"
+            aria-label="Back"
+          >
+            <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+              <path
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M12 4.5 6.5 10l5.5 5.5"
+              />
+            </svg>
+          </button>
           <h2 id="transcript-title">Transcript</h2>
         </div>
         <div class="transcript-toolbar">
@@ -111,7 +132,24 @@
       <div id="settings-view" class="hidden">
         <div class="settings-panel" id="settings-root">
           <div class="settings-header">
-            <button id="settings-back-btn" type="button" class="back-link">← Back</button>
+            <button
+              id="settings-back-btn"
+              type="button"
+              class="icon-btn back-btn"
+              title="Back"
+              aria-label="Back"
+            >
+              <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+                <path
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="M12 4.5 6.5 10l5.5 5.5"
+                />
+              </svg>
+            </button>
             <h2>Settings</h2>
           </div>
 

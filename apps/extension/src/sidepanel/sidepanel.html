@@ -10,9 +10,9 @@
   <body>
     <main class="sidepanel">
       <div id="ask-view" class="sidepanel-view">
-        <header class="app-header">
+        <header class="sidepanel-header">
           <h1>Ask</h1>
-          <p class="subtitle">Chat with your meeting transcripts</p>
+          <span class="sidepanel-header-hint">Chat with your meeting transcripts</span>
         </header>
 
         <p id="ask-disabled" class="sidepanel-notice hidden">
@@ -32,52 +32,76 @@
               +
             </button>
           </div>
-          <div class="meeting-ask-header">
-            <label for="meeting-ask" id="meeting-ask-label" class="meeting-ask-label">
-              Ask about your meetings
-            </label>
-            <div class="meeting-ask-header-actions">
-              <button
-                id="meeting-ask-clear-scope"
-                type="button"
-                class="text-link meeting-ask-clear-scope hidden"
-              >
-                All meetings
-              </button>
-              <button
-                id="meeting-ask-clear-chat"
-                type="button"
-                class="text-link meeting-ask-clear-chat hidden"
-              >
-                Clear chat
-              </button>
-            </div>
+          <div class="meeting-ask-scope">
+            <label for="meeting-ask-scope" class="meeting-ask-scope-label">About</label>
+            <select id="meeting-ask-scope" class="meeting-ask-scope-select"></select>
+            <button
+              id="meeting-ask-clear-chat"
+              type="button"
+              class="text-link meeting-ask-clear-chat hidden"
+            >
+              Clear chat
+            </button>
           </div>
-          <div id="meeting-ask-thread" class="meeting-ask-thread hidden"></div>
-          <textarea
-            id="meeting-ask"
-            rows="3"
-            placeholder="Ask a question… (Enter to send, Shift+Enter for a new line)"
-            autocomplete="off"
-          ></textarea>
-          <div class="meeting-ask-actions">
-            <button id="meeting-ask-btn" type="button" class="secondary meeting-ask-btn">
-              Send
+          <div id="meeting-ask-thread" class="meeting-ask-thread" aria-live="polite"></div>
+          <div class="meeting-ask-composer">
+            <textarea
+              id="meeting-ask"
+              rows="1"
+              placeholder="Ask a question…"
+              aria-label="Ask a question"
+              autocomplete="off"
+            ></textarea>
+            <button
+              id="meeting-ask-btn"
+              type="button"
+              class="meeting-ask-send"
+              title="Send (Enter)"
+              aria-label="Send"
+            >
+              <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M10 3.5a.75.75 0 0 1 .53.22l5 5a.75.75 0 1 1-1.06 1.06l-3.72-3.72V16a.75.75 0 0 1-1.5 0V6.06L5.53 9.78a.75.75 0 0 1-1.06-1.06l5-5A.75.75 0 0 1 10 3.5Z"
+                />
+              </svg>
             </button>
             <button
               id="meeting-ask-cancel-btn"
               type="button"
-              class="secondary meeting-ask-cancel-btn hidden"
+              class="meeting-ask-stop hidden"
+              title="Stop"
+              aria-label="Stop"
             >
-              Cancel
+              <svg viewBox="0 0 20 20" width="12" height="12" aria-hidden="true">
+                <rect x="4" y="4" width="12" height="12" rx="2" fill="currentColor" />
+              </svg>
             </button>
           </div>
+          <p class="meeting-ask-hint">Enter to send · Shift+Enter for a new line</p>
         </div>
       </div>
 
       <div id="transcript-view" class="sidepanel-view hidden">
         <div class="transcript-header">
-          <button id="transcript-back-btn" type="button" class="back-link">← Back to chat</button>
+          <button
+            id="transcript-back-btn"
+            type="button"
+            class="icon-btn back-btn"
+            title="Back to chat"
+            aria-label="Back to chat"
+          >
+            <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+              <path
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M12 4.5 6.5 10l5.5 5.5"
+              />
+            </svg>
+          </button>
           <h2 id="transcript-title">Transcript</h2>
         </div>
         <div class="transcript-toolbar">
