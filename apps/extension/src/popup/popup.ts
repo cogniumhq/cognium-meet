@@ -1,19 +1,13 @@
 import type {
   ExtensionSettings,
-  MeetingAskCitation,
-  MeetingAskMessage,
   RecordingMeta,
-  TranscriptResult,
-  TranscriptSegment,
   TranscriptionProgress,
 } from "@cognium/meet-shared";
 import {
   formatRecordingDurationMs,
   formatRecordingElapsedSeconds,
-  formatTimestamp,
   isTranscriptionProgressActive,
   mergeTranscriptionProgress,
-  segmentsToPlainText,
   transcriptionProgressLabel,
   transcriptionProgressPercent,
   DEFAULT_MEETING_LLM_PROVIDER,
@@ -29,40 +23,27 @@ import {
   downloadTranscript,
   fetchRecordings,
   fetchRecordingStatus,
-  fetchTranscript,
   regenerateMeetingNotes,
   retryRecording,
 } from "../lib/upload.js";
 import { deletePendingAudio, downloadPendingAudio, loadPendingAudio } from "../lib/pending-audio-store.js";
 import {
-  addAskTab,
-  ASK_WORKSPACE_KEY,
-  createAskTab,
-  findPendingAskTab,
-  formatMeetingScopeLabel,
   findServerProcessingEntry,
-  getActiveAskTab,
   getHistory,
   getSettings,
   HISTORY_KEY,
-  loadAskSectionOpen,
+  focusAskTabForRecording,
   loadAskWorkspace,
-  MAX_ASK_TABS,
-  removeAskTab,
   removeHistoryEntry,
-  saveAskSectionOpen,
-  saveHistory,
   saveAskWorkspace,
-  setActiveAskTab,
-  updateAskTab,
+  saveHistory,
   updateHistoryEntry,
-  type AskChatWorkspace,
   type StoredRecording,
 } from "../lib/storage.js";
 import { isRecordableTabUrl } from "../lib/recordable-tab.js";
 import { isMeetingAskEnabled } from "../lib/client-config.js";
-import { canRetryAsk, messagesForAskRetry } from "../lib/ask-chat.js";
 import { initSettingsForm } from "../lib/settings-form.js";
+import { initTranscriptViewer } from "../lib/transcript-viewer.js";
 
 const startBtn = document.getElementById("start-btn") as HTMLButtonElement;
 const stopOnlyBtn = document.getElementById("stop-only-btn") as HTMLButtonElement;
@@ -73,35 +54,13 @@ const statusText = document.getElementById("status-text") as HTMLParagraphElemen
 const recordingIndicator = document.getElementById("recording-indicator") as HTMLDivElement;
 const timerEl = document.getElementById("timer") as HTMLSpanElement;
 const historyList = document.getElementById("history-list") as HTMLUListElement;
-const meetingAskWrap = document.getElementById("meeting-ask-wrap") as HTMLDivElement;
-const meetingAskSection = document.getElementById("meeting-ask-section") as HTMLElement;
-const meetingAskToggle = document.getElementById("meeting-ask-toggle") as HTMLButtonElement;
-const meetingAskBody = document.getElementById("meeting-ask-body") as HTMLDivElement;
-const meetingAsk = document.getElementById("meeting-ask") as HTMLTextAreaElement;
-const meetingAskLabel = document.getElementById("meeting-ask-label") as HTMLLabelElement;
-const meetingAskBtn = document.getElementById("meeting-ask-btn") as HTMLButtonElement;
-const meetingAskCancelBtn = document.getElementById(
-  "meeting-ask-cancel-btn",
-) as HTMLButtonElement;
-const meetingAskClearScope = document.getElementById(
-  "meeting-ask-clear-scope",
-) as HTMLButtonElement;
-const meetingAskClearChat = document.getElementById(
-  "meeting-ask-clear-chat",
-) as HTMLButtonElement;
-const meetingAskThread = document.getElementById("meeting-ask-thread") as HTMLDivElement;
-const meetingAskTabs = document.getElementById("meeting-ask-tabs") as HTMLDivElement;
-const meetingAskNewTab = document.getElementById("meeting-ask-new-tab") as HTMLButtonElement;
+const meetingAskOpenBtn = document.getElementById("meeting-ask-open-btn") as HTMLButtonElement;
 const mainView = document.getElementById("main-view") as HTMLDivElement;
 const transcriptView = document.getElementById("transcript-view") as HTMLDivElement;
 const settingsView = document.getElementById("settings-view") as HTMLDivElement;
 const settingsOpenBtn = document.getElementById("settings-open-btn") as HTMLButtonElement;
 const settingsBackBtn = document.getElementById("settings-back-btn") as HTMLButtonElement;
 const transcriptBackBtn = document.getElementById("transcript-back-btn") as HTMLButtonElement;
-const transcriptTitle = document.getElementById("transcript-title") as HTMLHeadingElement;
-const transcriptSearch = document.getElementById("transcript-search") as HTMLInputElement;
-const transcriptCopyBtn = document.getElementById("transcript-copy-btn") as HTMLButtonElement;
-const transcriptBody = document.getElementById("transcript-body") as HTMLDivElement;
 const transcriptionProgress = document.getElementById(
   "transcription-progress",
 ) as HTMLDivElement;
@@ -117,16 +76,14 @@ let currentProgress: TranscriptionProgress | undefined;
 let watchingTranscriptionId: string | undefined;
 let displayedPercentFloor = 0;
 let historyRenderGen = 0;
-let currentTranscript: TranscriptResult | undefined;
-let askActiveTabId = "";
-let askScopeRecordingId: string | undefined;
-let askScopeMeetingTitle: string | undefined;
-let askScopeStartedAt: string | undefined;
-let askScopeDurationMs: number | undefined;
-let askMessages: MeetingAskMessage[] = [];
-let askChatSaveTimer: number | undefined;
-let askLoading = false;
-let askSectionOpen = false;
+let popupWindowId: number | undefined;
+void chrome.windows.getCurrent().then((win) => {
+  popupWindowId = win.id;
+});
+const transcriptViewer = initTranscriptViewer({
+  onCopied: (error) =>
+    error ? setStatus(error, true) : setStatus("Transcript copied to clipboard"),
+});
 
 void init();
 
@@ -147,49 +104,9 @@ async function init(): Promise<void> {
   settingsOpenBtn.addEventListener("click", () => showSettings(true));
   settingsBackBtn.addEventListener("click", () => showMainView());
   transcriptBackBtn.addEventListener("click", () => showMainView());
-  transcriptSearch.addEventListener("input", () => {
-    if (currentTranscript) {
-      renderTranscriptSegments(currentTranscript.segments, transcriptSearch.value);
-    }
-  });
-  transcriptCopyBtn.addEventListener("click", () => void copyTranscript());
-  meetingAskBtn.addEventListener("click", () => void runMeetingAsk());
-  meetingAskCancelBtn.addEventListener("click", () => void cancelMeetingAsk());
-  meetingAskToggle.addEventListener("click", () => setAskSectionOpen(!askSectionOpen));
-  meetingAskNewTab.addEventListener("click", (event) => {
-    event.stopPropagation();
-    void createNewAskTab();
-  });
-  meetingAskClearScope.addEventListener("click", () => void setAskScope());
-  meetingAskClearChat.addEventListener("click", () => void clearAskChatUi());
-  meetingAsk.addEventListener("input", () => scheduleSaveAskChat());
-  meetingAsk.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      void runMeetingAsk();
-    }
-  });
-  window.addEventListener("pagehide", () => {
-    window.clearTimeout(askChatSaveTimer);
-    void persistActiveTab();
-  });
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === "local" && changes[ASK_WORKSPACE_KEY]) {
-      void refreshAskFromStorage();
-    }
-  });
+  meetingAskOpenBtn.addEventListener("click", () => void openAskSidePanel());
   await initSettingsForm(document.getElementById("settings-root")!);
   await applyMeetingAskVisibility();
-  try {
-    await restoreAskChat();
-  } catch (err) {
-    console.error("[popup] restore Ask chat failed", err);
-  }
-  try {
-    await restoreAskSectionOpen();
-  } catch (err) {
-    console.error("[popup] restore Ask section open failed", err);
-  }
 
   startBtn.addEventListener("click", () => void startRecording());
   stopOnlyBtn.addEventListener("click", () => void stopRecording(false));
@@ -473,7 +390,7 @@ function showMainView(): void {
   mainView.classList.remove("hidden");
   settingsView.classList.add("hidden");
   transcriptView.classList.add("hidden");
-  currentTranscript = undefined;
+  transcriptViewer.reset();
   void applyMeetingAskVisibility();
   // Refresh history so per-meeting Ask chips match the setting.
   void renderHistory();
@@ -482,502 +399,43 @@ function showMainView(): void {
 async function applyMeetingAskVisibility(): Promise<void> {
   const settings = await getSettings();
   const enabled = isMeetingAskEnabled(settings);
-  meetingAskSection.classList.toggle("hidden", !enabled);
+  meetingAskOpenBtn.classList.toggle("hidden", !enabled);
 }
 
-function setAskSectionOpen(open: boolean, persist = true): void {
-  askSectionOpen = open;
-  meetingAskBody.classList.toggle("collapsed", !open);
-  meetingAskSection.classList.toggle("meeting-ask-section--open", open);
-  meetingAskToggle.setAttribute("aria-expanded", open ? "true" : "false");
-  if (persist) {
-    void saveAskSectionOpen(open);
+async function openAskSidePanel({ closePopup = true } = {}): Promise<boolean> {
+  // sidePanel.open must run inside the click gesture, so the window id is
+  // resolved up front at popup load instead of awaited here.
+  if (popupWindowId === undefined) {
+    setStatus("Could not open Ask — try again", true);
+    return false;
   }
-}
-
-async function restoreAskSectionOpen(): Promise<void> {
-  const open = await loadAskSectionOpen();
-  setAskSectionOpen(open, false);
-}
-
-function updateAskScopeChrome(): void {
-  if (askScopeRecordingId) {
-    const scopeLabel = formatMeetingScopeLabel(askScopeMeetingTitle, {
-      startedAt: askScopeStartedAt,
-      durationMs: askScopeDurationMs,
-    });
-    meetingAskLabel.textContent = `Ask about: ${scopeLabel}`;
-    meetingAskLabel.title = scopeLabel;
-    meetingAskClearScope.classList.remove("hidden");
-  } else {
-    meetingAskLabel.textContent = "Ask about your meetings";
-    meetingAskLabel.removeAttribute("title");
-    meetingAskClearScope.classList.add("hidden");
-  }
-}
-
-function applyActiveTabToUi(tab: {
-  scopeRecordingId?: string;
-  scopeMeetingTitle?: string;
-  scopeStartedAt?: string;
-  scopeDurationMs?: number;
-  messages: MeetingAskMessage[];
-  draftInput?: string;
-  pending?: boolean;
-}): void {
-  askScopeRecordingId = tab.scopeRecordingId;
-  askScopeMeetingTitle = tab.scopeMeetingTitle;
-  askScopeStartedAt = tab.scopeStartedAt;
-  askScopeDurationMs = tab.scopeDurationMs;
-  askMessages = tab.messages ?? [];
-  askLoading = tab.pending === true;
-  meetingAsk.value = tab.draftInput ?? "";
-  updateAskScopeChrome();
-}
-
-function renderAskTabs(workspace: AskChatWorkspace): void {
-  meetingAskTabs.innerHTML = "";
-
-  for (const tab of workspace.tabs) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "meeting-ask-tab";
-    btn.setAttribute("role", "tab");
-    btn.setAttribute("aria-selected", tab.id === workspace.activeTabId ? "true" : "false");
-    if (tab.id === workspace.activeTabId) {
-      btn.classList.add("meeting-ask-tab--active");
-    }
-    if (tab.pending) {
-      btn.classList.add("meeting-ask-tab--pending");
-    }
-
-    const label = document.createElement("span");
-    label.className = "meeting-ask-tab-label";
-    label.textContent = tab.label;
-    if (tab.scopeRecordingId) {
-      label.title = formatMeetingScopeLabel(tab.scopeMeetingTitle, {
-        startedAt: tab.scopeStartedAt,
-        durationMs: tab.scopeDurationMs,
-      });
-    }
-    btn.appendChild(label);
-
-    if (workspace.tabs.length > 1) {
-      const close = document.createElement("span");
-      close.className = "meeting-ask-tab-close";
-      close.setAttribute("aria-label", "Close chat");
-      close.textContent = "×";
-      close.addEventListener("click", (event) => {
-        event.stopPropagation();
-        void closeAskTab(tab.id);
-      });
-      btn.appendChild(close);
-    }
-
-    btn.addEventListener("click", (event) => {
-      event.stopPropagation();
-      void switchAskTab(tab.id);
-    });
-    meetingAskTabs.appendChild(btn);
-  }
-
-  meetingAskNewTab.disabled = workspace.tabs.length >= MAX_ASK_TABS;
-}
-
-async function persistActiveTab(pending = askLoading): Promise<void> {
-  if (!askActiveTabId) {
-    return;
-  }
-  let workspace = await loadAskWorkspace();
-  workspace = updateAskTab(workspace, askActiveTabId, {
-    scopeRecordingId: askScopeRecordingId,
-    scopeMeetingTitle: askScopeMeetingTitle,
-    scopeStartedAt: askScopeStartedAt,
-    scopeDurationMs: askScopeDurationMs,
-    messages: askMessages,
-    draftInput: meetingAsk.value,
-    pending,
-  });
-  await saveAskWorkspace(workspace);
-}
-
-async function switchAskTab(tabId: string): Promise<void> {
-  if (tabId === askActiveTabId) {
-    return;
-  }
-  await persistActiveTab(askLoading);
-  let workspace = await loadAskWorkspace();
-  workspace = setActiveAskTab(workspace, tabId);
-  await saveAskWorkspace(workspace);
-  await refreshAskFromStorage();
-}
-
-async function createNewAskTab(opts?: {
-  scopeRecordingId?: string;
-  scopeMeetingTitle?: string;
-  scopeStartedAt?: string;
-  scopeDurationMs?: number;
-}): Promise<void> {
-  setAskSectionOpen(true);
-  await persistActiveTab(askLoading);
-  let workspace = await loadAskWorkspace();
-  if (workspace.tabs.length >= MAX_ASK_TABS) {
-    return;
-  }
-  const tab = createAskTab(opts);
-  workspace = addAskTab(workspace, tab);
-  await saveAskWorkspace(workspace);
-  await refreshAskFromStorage();
-  meetingAsk.focus();
-}
-
-async function openAskForRecording(item: StoredRecording): Promise<void> {
-  const settings = await getSettings();
-  if (!isMeetingAskEnabled(settings)) {
-    return;
-  }
-  setAskSectionOpen(true);
-  await persistActiveTab(askLoading);
-  const workspace = await loadAskWorkspace();
-  const existing = workspace.tabs.find((tab) => tab.scopeRecordingId === item.id);
-  if (existing) {
-    await switchAskTab(existing.id);
-    meetingAsk.focus();
-    return;
-  }
-  await createNewAskTab({
-    scopeRecordingId: item.id,
-    scopeMeetingTitle: item.meetingTitle,
-    scopeStartedAt: item.startedAt,
-    scopeDurationMs: item.durationMs,
-  });
-}
-
-function askTabClosePrompt(tab: {
-  label: string;
-  scopeRecordingId?: string;
-  scopeMeetingTitle?: string;
-  scopeStartedAt?: string;
-  scopeDurationMs?: number;
-}): boolean {
-  const name = tab.scopeRecordingId
-    ? formatMeetingScopeLabel(tab.scopeMeetingTitle, {
-        startedAt: tab.scopeStartedAt,
-        durationMs: tab.scopeDurationMs,
-      })
-    : tab.label.trim() || "this chat";
-
-  return confirm(`Close "${name}"?\n\nMessages in this chat will be deleted.`);
-}
-
-async function closeAskTab(tabId: string): Promise<void> {
-  const workspace = await loadAskWorkspace();
-  const closing = workspace.tabs.find((tab) => tab.id === tabId);
-  if (!closing) {
-    return;
-  }
-  if (!askTabClosePrompt(closing)) {
-    return;
-  }
-  if (closing.pending) {
-    await cancelMeetingAsk();
-  }
-  if (tabId === askActiveTabId) {
-    askMessages = [];
-    meetingAsk.value = "";
-    askLoading = false;
-  }
-  const next = removeAskTab(workspace, tabId);
-  await saveAskWorkspace(next);
-  await refreshAskFromStorage();
-}
-
-async function setAskScope(item?: StoredRecording): Promise<void> {
-  const prevScope = askScopeRecordingId;
-  await persistActiveTab(askLoading);
-  askScopeRecordingId = item?.id;
-  askScopeMeetingTitle = item?.meetingTitle;
-  askScopeStartedAt = item?.startedAt;
-  askScopeDurationMs = item?.durationMs;
-  if (prevScope !== askScopeRecordingId && askMessages.length > 0) {
-    askMessages = [];
-    renderAskThread();
-  }
-  updateAskScopeChrome();
-  updateAskChrome();
-  await persistActiveTab();
-  if (item) {
-    meetingAsk.focus();
-  }
-}
-
-function updateAskChrome(): void {
-  if (askMessages.length > 0 || askLoading) {
-    meetingAskClearChat.classList.remove("hidden");
-  } else {
-    meetingAskClearChat.classList.add("hidden");
-  }
-  const anyPending = askLoading;
-  meetingAskBtn.classList.toggle("hidden", anyPending);
-  meetingAskCancelBtn.classList.toggle("hidden", !anyPending);
-  meetingAsk.disabled = anyPending;
-}
-
-function scheduleSaveAskChat(): void {
-  window.clearTimeout(askChatSaveTimer);
-  askChatSaveTimer = window.setTimeout(() => {
-    void persistActiveTab();
-  }, 250);
-}
-
-async function refreshAskFromStorage(): Promise<void> {
-  let workspace = await loadAskWorkspace();
-  const history = await getHistory();
-  let enriched = false;
-
-  for (const tab of workspace.tabs) {
-    if (!tab.scopeRecordingId || tab.scopeStartedAt) {
-      continue;
-    }
-    const match = history.find((item) => item.id === tab.scopeRecordingId);
-    if (!match) {
-      continue;
-    }
-    workspace = updateAskTab(workspace, tab.id, {
-      scopeMeetingTitle: tab.scopeMeetingTitle ?? match.meetingTitle,
-      scopeStartedAt: match.startedAt,
-      scopeDurationMs: match.durationMs,
-    });
-    enriched = true;
-  }
-
-  if (enriched) {
-    await saveAskWorkspace(workspace);
-  }
-
-  const active = getActiveAskTab(workspace);
-  askActiveTabId = active.id;
-  applyActiveTabToUi(active);
-  renderAskTabs(workspace);
-  meetingAskBtn.disabled = askLoading;
-  updateAskChrome();
-  renderAskThread();
-}
-
-async function restoreAskChat(): Promise<void> {
-  await refreshAskFromStorage();
-  const workspace = await loadAskWorkspace();
-  if (findPendingAskTab(workspace)) {
-    void resumeMeetingAskIfNeeded();
-  }
-}
-
-async function resumeMeetingAskIfNeeded(): Promise<void> {
   try {
-    await chrome.runtime.sendMessage({ type: "ASK_MEETINGS" });
-  } catch {
-    // Background may still be processing; storage listener will update the UI.
+    await chrome.sidePanel.open({ windowId: popupWindowId });
+  } catch (err) {
+    setStatus(err instanceof Error ? err.message : String(err), true);
+    return false;
+  }
+  if (closePopup) {
+    window.close();
+  }
+  return true;
+}
+
+async function askAboutRecordingInSidePanel(item: StoredRecording): Promise<void> {
+  // Open first so sidePanel.open stays inside the click gesture; the panel
+  // follows the shared Ask workspace, so it switches once the save lands.
+  const opened = openAskSidePanel({ closePopup: false });
+  await saveAskWorkspace(focusAskTabForRecording(await loadAskWorkspace(), item));
+  if (await opened) {
+    window.close();
   }
 }
 
-async function clearAskChatUi(): Promise<void> {
-  askMessages = [];
-  askLoading = false;
-  meetingAsk.value = "";
-  meetingAskBtn.disabled = false;
-  renderAskThread();
-  updateAskChrome();
-  await persistActiveTab(false);
-  const workspace = await loadAskWorkspace();
-  renderAskTabs(workspace);
-}
-
-function citationToRecording(citation: MeetingAskCitation): StoredRecording {
-  return {
-    id: citation.recordingId,
-    meetingTitle: citation.meetingTitle,
-    startedAt: citation.startedAt,
-    status: "completed",
-    createdAt: citation.startedAt,
-  };
-}
-
-function appendCitationButtons(parent: HTMLElement, citations: MeetingAskCitation[]): void {
-  if (citations.length === 0) {
-    return;
-  }
-
-  const heading = document.createElement("p");
-  heading.className = "meeting-ask-sources-title";
-  heading.textContent =
-    citations.length === 1 ? "Sources" : `Sources (${citations.length})`;
-  parent.appendChild(heading);
-
-  const list = document.createElement("ul");
-  list.className = "meeting-ask-sources";
-
-  for (const citation of citations) {
-    const li = document.createElement("li");
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "meeting-ask-source-btn";
-    btn.textContent = citation.meetingTitle ?? "Recording";
-    btn.title = citation.excerpt;
-    btn.addEventListener("click", () => {
-      void openTranscriptViewer(citationToRecording(citation));
-    });
-    li.appendChild(btn);
-    list.appendChild(li);
-  }
-
-  parent.appendChild(list);
-}
-
-function renderAskThread(): void {
-  meetingAskThread.innerHTML = "";
-
-  if (askMessages.length === 0 && !askLoading) {
-    meetingAskThread.classList.add("hidden");
-    return;
-  }
-
-  meetingAskThread.classList.remove("hidden");
-
-  for (let i = 0; i < askMessages.length; i++) {
-    const message = askMessages[i];
-    const bubble = document.createElement("div");
-    bubble.className = `meeting-ask-bubble meeting-ask-bubble--${message.role}`;
-    if (message.role === "assistant") {
-      if (message.isError) {
-        bubble.classList.add("meeting-ask-bubble--error");
-      } else if (message.insufficientContext) {
-        bubble.classList.add("meeting-ask-bubble--weak");
-      }
-    }
-
-    const text = document.createElement("div");
-    text.className = "meeting-ask-bubble-text";
-    text.textContent = message.content;
-    bubble.appendChild(text);
-
-    if (message.role === "assistant" && message.citations?.length) {
-      appendCitationButtons(bubble, message.citations);
-    }
-
-    const isLast = i === askMessages.length - 1;
-    if (
-      message.role === "assistant" &&
-      message.isError &&
-      isLast &&
-      canRetryAsk(askMessages, askLoading)
-    ) {
-      const retryBtn = document.createElement("button");
-      retryBtn.type = "button";
-      retryBtn.className = "meeting-ask-retry-btn";
-      retryBtn.textContent = "Retry";
-      retryBtn.addEventListener("click", () => void retryMeetingAsk());
-      bubble.appendChild(retryBtn);
-    }
-
-    meetingAskThread.appendChild(bubble);
-  }
-
-  if (askLoading) {
-    const loading = document.createElement("div");
-    loading.className = "meeting-ask-bubble meeting-ask-bubble--assistant meeting-ask-bubble--loading";
-    loading.textContent = "Thinking…";
-    meetingAskThread.appendChild(loading);
-  }
-
-  meetingAskThread.scrollTop = meetingAskThread.scrollHeight;
-}
-
-async function submitPendingAsk(): Promise<void> {
-  try {
-    const result = (await chrome.runtime.sendMessage({ type: "ASK_MEETINGS" })) as
-      | { ok?: boolean; error?: string }
-      | undefined;
-
-    if (result?.ok === false && result.error === "No pending ask") {
-      askLoading = false;
-      meetingAskBtn.disabled = false;
-      await persistActiveTab(false);
-      renderAskThread();
-      updateAskChrome();
-      return;
-    }
-
-    await refreshAskFromStorage();
-    if (!askLoading) {
-      meetingAsk.focus();
-    }
-  } catch {
-    // Popup may close while the background worker finishes the ask.
-    await refreshAskFromStorage();
-  }
-}
-
-async function retryMeetingAsk(): Promise<void> {
-  if (askLoading) {
-    return;
-  }
-
-  if (!messagesForAskRetry(askMessages)) {
-    return;
-  }
-
-  askLoading = true;
-  updateAskChrome();
-  renderAskThread();
-
-  try {
-    await chrome.runtime.sendMessage({ type: "ASK_RETRY" });
-    await refreshAskFromStorage();
-    if (!askLoading) {
-      meetingAsk.focus();
-    }
-  } catch {
-    await refreshAskFromStorage();
-  }
-}
-
-async function cancelMeetingAsk(): Promise<void> {
-  if (!askLoading) {
-    return;
-  }
-
-  try {
-    await chrome.runtime.sendMessage({ type: "ASK_CANCEL" });
-  } catch {
-    // Service worker may be unavailable; still clear local pending state.
-  }
-
-  askLoading = false;
-  meetingAskBtn.disabled = false;
-  await persistActiveTab(false);
-  renderAskThread();
-  updateAskChrome();
-}
-
-async function runMeetingAsk(): Promise<void> {
-  const question = meetingAsk.value.trim();
-  if (!question || askLoading) {
-    return;
-  }
-
-  const workspace = await loadAskWorkspace();
-  if (findPendingAskTab(workspace)) {
-    return;
-  }
-
-  askMessages.push({ role: "user", content: question });
-  meetingAsk.value = "";
-  askLoading = true;
-  meetingAskBtn.disabled = true;
-  updateAskChrome();
-  renderAskThread();
-  await persistActiveTab(true);
-  await submitPendingAsk();
+async function openTranscriptViewer(item: StoredRecording): Promise<void> {
+  mainView.classList.add("hidden");
+  settingsView.classList.add("hidden");
+  transcriptView.classList.remove("hidden");
+  await transcriptViewer.open(item);
 }
 
 function showSettings(open: boolean): void {
@@ -985,109 +443,10 @@ function showSettings(open: boolean): void {
     mainView.classList.add("hidden");
     settingsView.classList.remove("hidden");
     transcriptView.classList.add("hidden");
-    currentTranscript = undefined;
+    transcriptViewer.reset();
     return;
   }
   showMainView();
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function highlightText(text: string, query: string): string {
-  const escaped = escapeHtml(text);
-  const q = query.trim();
-  if (!q) {
-    return escaped;
-  }
-  const pattern = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return escaped.replace(new RegExp(pattern, "gi"), (match) => `<mark>${match}</mark>`);
-}
-
-function renderTranscriptSegments(segments: TranscriptSegment[], query: string): void {
-  const q = query.trim().toLowerCase();
-  const filtered = q
-    ? segments.filter(
-        (seg) =>
-          seg.text.toLowerCase().includes(q) ||
-          seg.speaker?.toLowerCase().includes(q),
-      )
-    : segments;
-
-  transcriptBody.innerHTML = "";
-  if (filtered.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "transcript-empty";
-    empty.textContent = q ? "No matches" : "Transcript is empty";
-    transcriptBody.appendChild(empty);
-    return;
-  }
-
-  for (const seg of filtered) {
-    const row = document.createElement("div");
-    row.className = "transcript-segment";
-
-    const meta = document.createElement("div");
-    meta.className = "transcript-segment-meta";
-    const speaker = seg.speaker ? ` · ${seg.speaker}` : "";
-    meta.textContent = `${formatTimestamp(seg.start)}${speaker}`;
-
-    const text = document.createElement("div");
-    text.className = "transcript-segment-text";
-    text.innerHTML = highlightText(seg.text.trim(), query);
-
-    row.appendChild(meta);
-    row.appendChild(text);
-    transcriptBody.appendChild(row);
-  }
-}
-
-async function openTranscriptViewer(
-  item: StoredRecording,
-  initialQuery = "",
-): Promise<void> {
-  mainView.classList.add("hidden");
-  settingsView.classList.add("hidden");
-  transcriptView.classList.remove("hidden");
-  transcriptTitle.textContent = item.meetingTitle ?? "Recording";
-  transcriptSearch.value = initialQuery;
-  currentTranscript = undefined;
-  transcriptBody.innerHTML = "";
-  const loading = document.createElement("p");
-  loading.className = "transcript-loading";
-  loading.textContent = "Loading transcript…";
-  transcriptBody.appendChild(loading);
-  transcriptCopyBtn.disabled = true;
-
-  try {
-    const transcript = await fetchTranscript(item.id);
-    currentTranscript = transcript;
-    renderTranscriptSegments(transcript.segments, initialQuery);
-    transcriptCopyBtn.disabled = false;
-  } catch (err) {
-    transcriptBody.innerHTML = "";
-    const error = document.createElement("p");
-    error.className = "transcript-error";
-    error.textContent = err instanceof Error ? err.message : String(err);
-    transcriptBody.appendChild(error);
-  }
-}
-
-async function copyTranscript(): Promise<void> {
-  if (!currentTranscript) {
-    return;
-  }
-  try {
-    await navigator.clipboard.writeText(segmentsToPlainText(currentTranscript.segments));
-    setStatus("Transcript copied to clipboard");
-  } catch (err) {
-    setStatus(err instanceof Error ? err.message : String(err), true);
-  }
 }
 
 async function startRecording(): Promise<void> {
@@ -1867,7 +1226,7 @@ async function renderHistory(): Promise<void> {
       );
       if (isMeetingAskEnabled(settings)) {
         toolbar.appendChild(
-          createChipBtn("Ask", () => void openAskForRecording(item), "default"),
+          createChipBtn("Ask", () => void askAboutRecordingInSidePanel(item), "default"),
         );
       }
 

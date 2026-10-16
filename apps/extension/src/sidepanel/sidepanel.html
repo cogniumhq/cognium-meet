@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cognium Meet · Ask</title>
+    <link rel="stylesheet" href="../popup/popup.css" />
+    <link rel="stylesheet" href="./sidepanel.css" />
+  </head>
+  <body>
+    <main class="sidepanel">
+      <div id="ask-view" class="sidepanel-view">
+        <header class="app-header">
+          <h1>Ask</h1>
+          <p class="subtitle">Chat with your meeting transcripts</p>
+        </header>
+
+        <p id="ask-disabled" class="sidepanel-notice hidden">
+          Meeting Q&amp;A is turned off. Enable it in the extension settings.
+        </p>
+
+        <div id="meeting-ask-wrap" class="meeting-ask-wrap">
+          <div class="meeting-ask-tabbar">
+            <div id="meeting-ask-tabs" class="meeting-ask-tabs" role="tablist"></div>
+            <button
+              id="meeting-ask-new-tab"
+              type="button"
+              class="meeting-ask-new-tab"
+              title="New chat"
+              aria-label="New chat"
+            >
+              +
+            </button>
+          </div>
+          <div class="meeting-ask-header">
+            <label for="meeting-ask" id="meeting-ask-label" class="meeting-ask-label">
+              Ask about your meetings
+            </label>
+            <div class="meeting-ask-header-actions">
+              <button
+                id="meeting-ask-clear-scope"
+                type="button"
+                class="text-link meeting-ask-clear-scope hidden"
+              >
+                All meetings
+              </button>
+              <button
+                id="meeting-ask-clear-chat"
+                type="button"
+                class="text-link meeting-ask-clear-chat hidden"
+              >
+                Clear chat
+              </button>
+            </div>
+          </div>
+          <div id="meeting-ask-thread" class="meeting-ask-thread hidden"></div>
+          <textarea
+            id="meeting-ask"
+            rows="3"
+            placeholder="Ask a question… (Enter to send, Shift+Enter for a new line)"
+            autocomplete="off"
+          ></textarea>
+          <div class="meeting-ask-actions">
+            <button id="meeting-ask-btn" type="button" class="secondary meeting-ask-btn">
+              Send
+            </button>
+            <button
+              id="meeting-ask-cancel-btn"
+              type="button"
+              class="secondary meeting-ask-cancel-btn hidden"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div id="transcript-view" class="sidepanel-view hidden">
+        <div class="transcript-header">
+          <button id="transcript-back-btn" type="button" class="back-link">← Back to chat</button>
+          <h2 id="transcript-title">Transcript</h2>
+        </div>
+        <div class="transcript-toolbar">
+          <input
+            id="transcript-search"
+            type="search"
+            placeholder="Search transcript…"
+            autocomplete="off"
+          />
+          <button id="transcript-copy-btn" type="button" class="secondary transcript-copy-btn">
+            Copy
+          </button>
+        </div>
+        <div id="transcript-body" class="transcript-scroll"></div>
+      </div>
+    </main>
+    <script type="module" src="./sidepanel.ts"></script>
+  </body>
+</html>

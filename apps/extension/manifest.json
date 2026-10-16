@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Cognium Meet",
   "description": "Record browser tab audio and transcribe to text files",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "permissions": [
     "tabCapture",
     "offscreen",
@@ -10,7 +10,8 @@
     "activeTab",
     "tabs",
     "identity",
-    "identity.email"
+    "identity.email",
+    "sidePanel"
   ],
   "host_permissions": [
     "http://localhost:3847/*",
@@ -21,6 +22,9 @@
     "default_title": "Cognium Meet"
   },
   "options_page": "src/options/options.html",
+  "side_panel": {
+    "default_path": "src/sidepanel/sidepanel.html"
+  },
   "background": {
     "service_worker": "src/background/service-worker.ts",
     "type": "module"

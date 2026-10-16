@@ -74,77 +74,18 @@
           </div>
           <ul id="history-list" class="history-scroll"></ul>
 
-          <section id="meeting-ask-section" class="meeting-ask-section">
-            <button
-              id="meeting-ask-toggle"
-              type="button"
-              class="meeting-ask-toggle"
-              aria-expanded="false"
-              aria-controls="meeting-ask-body"
-            >
-              <span class="meeting-ask-summary-text">
-                <span class="meeting-ask-summary-title">Ask</span>
-                <span class="meeting-ask-summary-hint">Chat with your meeting transcripts</span>
-              </span>
-              <span class="meeting-ask-chevron" aria-hidden="true">▸</span>
-            </button>
-            <div id="meeting-ask-body" class="meeting-ask-body collapsed">
-            <div id="meeting-ask-wrap" class="meeting-ask-wrap">
-            <div class="meeting-ask-tabbar">
-              <div id="meeting-ask-tabs" class="meeting-ask-tabs" role="tablist"></div>
-              <button
-                id="meeting-ask-new-tab"
-                type="button"
-                class="meeting-ask-new-tab"
-                title="New chat"
-                aria-label="New chat"
-              >
-                +
-              </button>
-            </div>
-            <div class="meeting-ask-header">
-              <label for="meeting-ask" id="meeting-ask-label" class="meeting-ask-label">
-                Ask about your meetings
-              </label>
-              <div class="meeting-ask-header-actions">
-                <button
-                  id="meeting-ask-clear-scope"
-                  type="button"
-                  class="text-link meeting-ask-clear-scope hidden"
-                >
-                  All meetings
-                </button>
-                <button
-                  id="meeting-ask-clear-chat"
-                  type="button"
-                  class="text-link meeting-ask-clear-chat hidden"
-                >
-                  Clear chat
-                </button>
-              </div>
-            </div>
-            <div id="meeting-ask-thread" class="meeting-ask-thread hidden"></div>
-            <textarea
-              id="meeting-ask"
-              rows="2"
-              placeholder="Ask a question… (Enter to send)"
-              autocomplete="off"
-            ></textarea>
-            <div class="meeting-ask-actions">
-              <button id="meeting-ask-btn" type="button" class="secondary meeting-ask-btn">
-                Send
-              </button>
-              <button
-                id="meeting-ask-cancel-btn"
-                type="button"
-                class="secondary meeting-ask-cancel-btn hidden"
-              >
-                Cancel
-              </button>
-            </div>
-            </div>
-            </div>
-          </section>
+          <button
+            id="meeting-ask-open-btn"
+            type="button"
+            class="meeting-ask-open-btn"
+            title="Open Ask in the side panel"
+          >
+            <span class="meeting-ask-summary-text">
+              <span class="meeting-ask-summary-title">Ask</span>
+              <span class="meeting-ask-summary-hint">Chat with your meeting transcripts</span>
+            </span>
+            <span class="meeting-ask-open-icon" aria-hidden="true">⇱</span>
+          </button>
         </section>
       </div>
 

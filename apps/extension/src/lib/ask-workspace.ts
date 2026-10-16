@@ -3,7 +3,6 @@ import { formatRecordingDurationMs } from "@cognium/meet-shared";
 import type { AskChatState } from "./storage.js";
 
 export const ASK_WORKSPACE_KEY = "meetingAskWorkspace";
-export const ASK_SECTION_OPEN_KEY = "meetingAskSectionOpen";
 export const LEGACY_ASK_CHAT_KEY = "meetingAskChat";
 export const MAX_ASK_TABS = 12;
 
@@ -172,6 +171,31 @@ export function addAskTab(
     activeTabId: tab.id,
     tabs: [...workspace.tabs, tab],
   };
+}
+
+/** Make the chat scoped to this recording active, creating it if needed. */
+export function focusAskTabForRecording(
+  workspace: AskChatWorkspace,
+  recording: {
+    id: string;
+    meetingTitle?: string;
+    startedAt?: string;
+    durationMs?: number;
+  },
+): AskChatWorkspace {
+  const existing = workspace.tabs.find((tab) => tab.scopeRecordingId === recording.id);
+  if (existing) {
+    return setActiveAskTab(workspace, existing.id);
+  }
+  return addAskTab(
+    workspace,
+    createAskTab({
+      scopeRecordingId: recording.id,
+      scopeMeetingTitle: recording.meetingTitle,
+      scopeStartedAt: recording.startedAt,
+      scopeDurationMs: recording.durationMs,
+    }),
+  );
 }
 
 export function removeAskTab(

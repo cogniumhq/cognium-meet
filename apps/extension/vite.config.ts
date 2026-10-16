@@ -9,6 +9,7 @@ export default defineConfig({
       input: {
         offscreen: "src/offscreen/offscreen.html",
         options: "src/options/options.html",
+        sidepanel: "src/sidepanel/sidepanel.html",
       },
     },
   },
