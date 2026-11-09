@@ -14,6 +14,7 @@ import {
   addToHistory,
   findPendingAskTab,
   getActiveAskTab,
+  getHistory,
   getSettings,
   loadAskWorkspace,
   replaceHistoryEntry,
@@ -37,6 +38,7 @@ import {
   savePendingAudio,
 } from "../lib/pending-audio-store.js";
 import { isRecordableTabUrl, tabRecordingTitle } from "../lib/recordable-tab.js";
+import { recoverOrphanedPendingAudio } from "../lib/history-recovery.js";
 
 const OFFSCREEN_URL = chrome.runtime.getURL("src/offscreen/offscreen.html");
 
@@ -72,6 +74,30 @@ interface FinalizeResult {
 void loadRecordingState().then((state) => {
   recordingState = state;
 });
+
+void runStartupHistoryRecovery();
+
+/**
+ * A fresh service worker means any upload started by a previous instance died with it:
+ * mark those entries retryable, then surface local audio that has no history entry.
+ */
+async function runStartupHistoryRecovery(): Promise<void> {
+  try {
+    const history = await getHistory();
+    const interrupted = history.filter(
+      (item) => item.status === "uploading" && item.localAudioId,
+    );
+    for (const item of interrupted) {
+      await updateHistoryEntry(item.id, {
+        status: "upload_failed",
+        error: "Upload was interrupted — retry to transcribe",
+      });
+    }
+    await recoverOrphanedPendingAudio();
+  } catch (err) {
+    console.warn("[history] startup recovery failed", err);
+  }
+}
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.target === OFFSCREEN_TARGET) {
@@ -415,6 +441,8 @@ async function handleCaptureEndedWithLocalAudio(message: {
     recordingState = stored;
 
     if (!stored.isRecording) {
+      // Already stopped elsewhere; make sure the saved audio still has a history entry.
+      await recoverOrphanedPendingAudio();
       return;
     }
 
@@ -428,18 +456,6 @@ async function handleCaptureEndedWithLocalAudio(message: {
       return;
     }
 
-    await setRecordingState({
-      isRecording: false,
-      tabId: undefined,
-      startedAt: undefined,
-      meetingTitle: undefined,
-      includedMic: undefined,
-      micLabel: undefined,
-      lastError: undefined,
-    });
-
-    await closeOffscreenDocument();
-
     await finalizeRecordingBytes(pending.bytes, {
       mimeType: pending.meta.mimeType ?? message.mimeType ?? "audio/webm",
       micBytes: pending.micBytes,
@@ -450,6 +466,7 @@ async function handleCaptureEndedWithLocalAudio(message: {
       autoStoppedReason: message.reason ?? "tab_closed",
       transcribe: true,
       existingLocalAudioId: message.localAudioId,
+      onLocalEntrySaved: releaseCaptureAfterStop,
     });
   } finally {
     isFinalizingRecording = false;
@@ -587,18 +604,6 @@ async function stopRecordingAndFinalize(opts?: {
         return { error, durationMs, meetingTitle, startedAt };
       }
 
-      await setRecordingState({
-        isRecording: false,
-        tabId: undefined,
-        startedAt: undefined,
-        meetingTitle: undefined,
-        includedMic: undefined,
-        micLabel: undefined,
-        lastError: undefined,
-      });
-
-      await closeOffscreenDocument();
-
       return finalizeRecordingBytes(pending.bytes, {
         mimeType: pending.meta.mimeType ?? response.mimeType ?? "audio/webm",
         micBytes: pending.micBytes,
@@ -609,6 +614,7 @@ async function stopRecordingAndFinalize(opts?: {
         autoStoppedReason: opts?.reason,
         transcribe: opts?.transcribe !== false,
         existingLocalAudioId: response.localAudioId,
+        onLocalEntrySaved: releaseCaptureAfterStop,
       });
     }
 
@@ -651,6 +657,21 @@ async function stopRecordingAndFinalize(opts?: {
   }
 }
 
+/** Clears recording state and closes offscreen once the stopped audio has a history entry. */
+async function releaseCaptureAfterStop(): Promise<void> {
+  await setRecordingState({
+    isRecording: false,
+    tabId: undefined,
+    startedAt: undefined,
+    meetingTitle: undefined,
+    includedMic: undefined,
+    micLabel: undefined,
+    lastError: undefined,
+  });
+
+  await closeOffscreenDocument();
+}
+
 async function finalizeRecordingBytes(
   audioBytes: Uint8Array,
   params: {
@@ -663,6 +684,8 @@ async function finalizeRecordingBytes(
     autoStoppedReason?: "tab_closed" | "capture_ended";
     transcribe?: boolean;
     existingLocalAudioId?: string;
+    /** Runs after the local history entry is written, before any upload starts. */
+    onLocalEntrySaved?: () => Promise<void>;
   },
 ): Promise<FinalizeResult> {
   const {
@@ -675,6 +698,7 @@ async function finalizeRecordingBytes(
     autoStoppedReason,
     transcribe = true,
     existingLocalAudioId,
+    onLocalEntrySaved,
   } = params;
   const titleSuffix =
     autoStoppedReason === "tab_closed"
@@ -698,18 +722,25 @@ async function finalizeRecordingBytes(
     });
   }
 
-  if (!transcribe) {
-    const entry: StoredRecording = {
-      id: localAudioId,
-      meetingTitle: displayTitle,
-      startedAt: new Date(startedAt).toISOString(),
-      durationMs,
-      status: "saved",
-      createdAt: new Date().toISOString(),
-      localAudioId,
-    };
-    await addToHistory(entry);
+  const localEntry: StoredRecording = {
+    id: localAudioId,
+    meetingTitle: displayTitle,
+    startedAt: new Date(startedAt).toISOString(),
+    durationMs,
+    status: transcribe ? "uploading" : "saved",
+    createdAt: new Date().toISOString(),
+    localAudioId,
+    hasMicAudio: Boolean(micBytes?.length),
+  };
+  // Write history before uploading so the audio is never left without an entry
+  // if the service worker dies mid-upload.
+  try {
+    await addToHistory(localEntry);
+  } finally {
+    await onLocalEntrySaved?.();
+  }
 
+  if (!transcribe) {
     return {
       localAudioId,
       savedLocally: true,
@@ -732,10 +763,6 @@ async function finalizeRecordingBytes(
       durationMs,
     });
 
-    if (deleteLocalAfterUpload) {
-      await deletePendingAudio(localAudioId);
-    }
-
     const entry: StoredRecording = {
       id: upload.id,
       meetingTitle: displayTitle,
@@ -748,7 +775,10 @@ async function finalizeRecordingBytes(
       hasMicAudio: Boolean(micBytes?.length),
       ...(deleteLocalAfterUpload ? {} : { localAudioId }),
     };
-    await addToHistory(entry);
+    await replaceHistoryEntry(localAudioId, entry);
+    if (deleteLocalAfterUpload) {
+      await deletePendingAudio(localAudioId);
+    }
     void trackTranscription(upload.id);
 
     return {
@@ -759,17 +789,7 @@ async function finalizeRecordingBytes(
     };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
-    const entry: StoredRecording = {
-      id: localAudioId,
-      meetingTitle: displayTitle,
-      startedAt: new Date(startedAt).toISOString(),
-      durationMs,
-      status: "upload_failed",
-      error,
-      createdAt: new Date().toISOString(),
-      localAudioId,
-    };
-    await addToHistory(entry);
+    await replaceHistoryEntry(localAudioId, { ...localEntry, status: "upload_failed", error });
 
     return {
       localAudioId,
@@ -814,10 +834,6 @@ async function handleRetryUpload(
       durationMs: pending.meta.durationMs,
     });
 
-    if (deleteLocalAfterUpload) {
-      await deletePendingAudio(localAudioId);
-    }
-
     const entry: StoredRecording = {
       id: upload.id,
       meetingTitle: pending.meta.meetingTitle,
@@ -831,6 +847,9 @@ async function handleRetryUpload(
       ...(deleteLocalAfterUpload ? {} : { localAudioId }),
     };
     await replaceHistoryEntry(localAudioId, entry);
+    if (deleteLocalAfterUpload) {
+      await deletePendingAudio(localAudioId);
+    }
     void trackTranscription(upload.id);
 
     sendResponse({

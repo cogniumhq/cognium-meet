@@ -40,6 +40,8 @@ import {
   updateHistoryEntry,
   type StoredRecording,
 } from "../lib/storage.js";
+import { mergeServerHistory } from "../lib/history-merge.js";
+import { recoverOrphanedPendingAudio } from "../lib/history-recovery.js";
 import { isRecordableTabUrl } from "../lib/recordable-tab.js";
 import { isMeetingAskEnabled } from "../lib/client-config.js";
 import { initSettingsForm } from "../lib/settings-form.js";
@@ -122,18 +124,13 @@ async function init(): Promise<void> {
   }
 
   await hydrateHistoryFromServer();
+  await recoverOrphanedPendingAudio().catch((err) =>
+    console.warn("[history] local recording recovery failed", err),
+  );
   await refreshStaleHistory();
   await restoreTranscriptionProgressUi();
   await renderHistory();
   subscribeToHistoryUpdates();
-}
-
-function isLocalOnlyHistoryEntry(item: StoredRecording): boolean {
-  return (
-    Boolean(item.localAudioId) ||
-    item.status === "saved" ||
-    item.status === "upload_failed"
-  );
 }
 
 function recordingMetaToStoredRecording(meta: RecordingMeta): StoredRecording {
@@ -154,7 +151,6 @@ function recordingMetaToStoredRecording(meta: RecordingMeta): StoredRecording {
 }
 
 async function hydrateHistoryFromServer(): Promise<void> {
-  const local = await getHistory();
   let remote: RecordingMeta[];
   try {
     remote = await fetchRecordings();
@@ -162,13 +158,10 @@ async function hydrateHistoryFromServer(): Promise<void> {
     return;
   }
 
-  const localOnly = local.filter(isLocalOnlyHistoryEntry);
-  const merged = [
-    ...remote.map(recordingMetaToStoredRecording),
-    ...localOnly.filter((item) => !remote.some((meta) => meta.id === item.id)),
-  ].slice(0, 50);
-
-  await saveHistory(merged);
+  // Read local history only after the fetch so writes made meanwhile (e.g. by the
+  // service worker) are merged, not overwritten. Local-only entries are never dropped.
+  const local = await getHistory();
+  await saveHistory(mergeServerHistory(local, remote.map(recordingMetaToStoredRecording)));
 }
 
 function subscribeToHistoryUpdates(): void {
@@ -601,6 +594,8 @@ function statusBadgeLabel(status: string): string {
       return "Transcribing";
     case "saved":
       return "Saved";
+    case "uploading":
+      return "Uploading";
     case "upload_failed":
       return "Upload failed";
     case "failed":
@@ -986,6 +981,12 @@ async function removeFromHistory(item: {
   status: string;
   localAudioId?: string;
 }): Promise<void> {
+  if (item.localAudioId) {
+    // Also remove the IndexedDB audio, otherwise orphan recovery would restore the entry.
+    await deleteLocalRecording(item);
+    return;
+  }
+
   const label = item.meetingTitle ?? "this item";
   const onServer =
     !item.localAudioId &&
@@ -1180,9 +1181,10 @@ async function renderHistory(): Promise<void> {
   for (const item of history) {
     const li = document.createElement("li");
     li.className = "history-item";
-    let hasMicTrack = false;
+    let hasMicTrack = Boolean(item.localAudioId && item.hasMicAudio);
     let durationMs = item.durationMs;
-    if (item.localAudioId) {
+    if (item.localAudioId && (item.hasMicAudio === undefined || !durationMs)) {
+      // Only load the (possibly large) local blob when the entry lacks this metadata.
       const pending = await loadPendingAudio(item.localAudioId);
       if (gen !== historyRenderGen) {
         return;

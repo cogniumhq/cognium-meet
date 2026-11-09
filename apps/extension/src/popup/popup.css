@@ -508,7 +508,8 @@ button:disabled {
   background: var(--success-bg);
 }
 
-.status-badge--processing {
+.status-badge--processing,
+.status-badge--uploading {
   color: #7eb8ff;
   background: rgba(59, 130, 246, 0.15);
 }

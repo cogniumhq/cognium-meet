@@ -29,6 +29,7 @@ import {
   mergeTranscriptionProgress,
 } from "@cognium/meet-shared";
 import { getChromeAccountKey } from "./chrome-identity.js";
+import { upsertHistoryEntry } from "./history-merge.js";
 
 const SETTINGS_KEY = "settings";
 const USER_ID_KEY = "cogniumUserId";
@@ -250,7 +251,7 @@ export function findServerProcessingEntry(
 export async function addToHistory(entry: StoredRecording): Promise<void> {
   const result = await chrome.storage.local.get(HISTORY_KEY);
   const history = (result[HISTORY_KEY] as StoredRecording[] | undefined) ?? [];
-  const next = [entry, ...history].slice(0, 50);
+  const next = upsertHistoryEntry(history, entry);
   await chrome.storage.local.set({ [HISTORY_KEY]: next });
 }
 
@@ -279,7 +280,11 @@ export async function replaceHistoryEntry(
 ): Promise<void> {
   const result = await chrome.storage.local.get(HISTORY_KEY);
   const history = (result[HISTORY_KEY] as StoredRecording[] | undefined) ?? [];
-  const next = history.map((item) => (item.id === oldId ? entry : item));
+  // Upsert: works even if the old entry vanished, and de-dupes a server copy of `entry`.
+  const next = upsertHistoryEntry(
+    history.filter((item) => item.id !== oldId),
+    entry,
+  );
   await chrome.storage.local.set({ [HISTORY_KEY]: next });
 }
 

@@ -90,6 +90,49 @@ export async function loadPendingAudio(
   };
 }
 
+/** All record keys in the pending-audio store (does not load audio bytes). */
+export async function listPendingAudioIds(): Promise<string[]> {
+  const db = await openDb();
+  const keys = await new Promise<IDBValidKey[]>((resolve, reject) => {
+    const tx = db.transaction(STORE, "readonly");
+    const request = tx.objectStore(STORE).getAllKeys();
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error("IndexedDB key read failed"));
+    tx.oncomplete = () => db.close();
+  });
+  return keys.filter((key): key is string => typeof key === "string");
+}
+
+/**
+ * Metadata for one pending recording. Audio and metadata share a record, so the value is
+ * read once, but only the metadata (and whether a mic track exists) is returned/kept.
+ */
+export async function loadPendingAudioMeta(
+  id: string,
+): Promise<(PendingAudioMeta & { hasMicTrack: boolean }) | null> {
+  const db = await openDb();
+  const result = await new Promise<(PendingAudioMeta & { hasMicTrack: boolean }) | null>(
+    (resolve, reject) => {
+      const tx = db.transaction(STORE, "readonly");
+      const request = tx.objectStore(STORE).get(id);
+      request.onsuccess = () => {
+        const stored = request.result as StoredPending | undefined;
+        if (!stored?.meta) {
+          resolve(null);
+          return;
+        }
+        resolve({
+          ...stored.meta,
+          hasMicTrack: Boolean(stored.meta.micByteLength ?? stored.micBytes?.byteLength),
+        });
+      };
+      request.onerror = () => reject(request.error ?? new Error("IndexedDB read failed"));
+      tx.oncomplete = () => db.close();
+    },
+  );
+  return result;
+}
+
 export async function deletePendingAudio(id: string): Promise<void> {
   const db = await openDb();
   await new Promise<void>((resolve, reject) => {
